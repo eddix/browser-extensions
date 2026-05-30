@@ -23,6 +23,37 @@ let variants: [String: Variant] = [
 ]
 let order = ["indigo", "teal", "sunset"]
 
+/// Draws a bold open "A" with a small "+" (Arc, enhanced), centered in an
+/// `S`×`S` context. Shared geometry so the menu-bar template matches.
+func drawAPlus(_ ctx: CGContext, _ S: CGFloat, color: CGColor, shadow: CGColor?) {
+    ctx.saveGState()
+    if let shadow { ctx.setShadow(offset: CGSize(width: 0, height: -S * 0.008), blur: S * 0.02, color: shadow) }
+    ctx.setStrokeColor(color)
+    ctx.setLineCap(.round); ctx.setLineJoin(.round)
+
+    // the A: two legs meeting at an apex
+    ctx.setLineWidth(S * 0.090)
+    let apex = CGPoint(x: S * 0.435, y: S * 0.715)
+    let bl = CGPoint(x: S * 0.265, y: S * 0.300)
+    let br = CGPoint(x: S * 0.605, y: S * 0.300)
+    ctx.move(to: bl); ctx.addLine(to: apex); ctx.addLine(to: br); ctx.strokePath()
+
+    // crossbar
+    let t: CGFloat = 0.40
+    ctx.move(to: CGPoint(x: bl.x + (apex.x - bl.x) * t, y: bl.y + (apex.y - bl.y) * t))
+    ctx.addLine(to: CGPoint(x: br.x + (apex.x - br.x) * t, y: br.y + (apex.y - br.y) * t))
+    ctx.strokePath()
+
+    // the +, upper-right
+    let pc = CGPoint(x: S * 0.700, y: S * 0.655)
+    let pa = S * 0.060
+    ctx.setLineWidth(S * 0.072)
+    ctx.move(to: CGPoint(x: pc.x - pa, y: pc.y)); ctx.addLine(to: CGPoint(x: pc.x + pa, y: pc.y)); ctx.strokePath()
+    ctx.move(to: CGPoint(x: pc.x, y: pc.y - pa)); ctx.addLine(to: CGPoint(x: pc.x, y: pc.y + pa)); ctx.strokePath()
+
+    ctx.restoreGState()
+}
+
 func render(_ v: Variant, _ size: Int) -> CGImage {
     let S = CGFloat(size)
     let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
@@ -56,21 +87,8 @@ func render(_ v: Variant, _ size: Int) -> CGImage {
     ctx.addPath(path); ctx.setStrokeColor(col(0xFFFFFF, 0.12)); ctx.setLineWidth(max(1, S * 0.005)); ctx.strokePath()
     ctx.restoreGState()
 
-    // magnifier glyph
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -S * 0.008), blur: S * 0.02, color: col(0, 0.22))
-    ctx.setStrokeColor(col(0xFFFFFF)); ctx.setLineCap(.round)
-    let center = CGPoint(x: S * 0.455, y: S * 0.560)
-    let r = S * 0.150
-    let lineWidth = S * 0.062
-    ctx.setLineWidth(lineWidth)
-    ctx.addEllipse(in: CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r))
-    ctx.strokePath()
-    let d: CGFloat = 0.70710678
-    let start = CGPoint(x: center.x + r * d, y: center.y - r * d)
-    let end = CGPoint(x: start.x + S * 0.150 * d, y: start.y - S * 0.150 * d)
-    ctx.move(to: start); ctx.addLine(to: end); ctx.strokePath()
-    ctx.restoreGState()
+    // "A+" glyph: a bold open A with a small plus (Arc, enhanced)
+    drawAPlus(ctx, S, color: col(0xFFFFFF), shadow: col(0, 0.22))
 
     return ctx.makeImage()!
 }
