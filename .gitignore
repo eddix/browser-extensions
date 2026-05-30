@@ -13,3 +13,7 @@ log/
 # Xcode user state
 *.xcodeproj/xcuserdata/
 *.xcuserstate
+
+# Icon intermediates (regenerable via nodia/icon/make-icon.swift)
+nodia/icon/preview/
+*.iconset/
