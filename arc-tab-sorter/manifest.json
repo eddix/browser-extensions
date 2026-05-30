@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Arc Tab Sorter",
+  "version": "2.0.0",
+  "description": "跨 Arc Space 的标签导航器：按域名分组、搜索、点击切换",
+  "permissions": ["tabs"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Arc Tab Sorter"
+  }
+}

@@ -1,0 +1,15 @@
+# Build artifacts
+.build/
+dist/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Logs (runtime junk, often empty)
+log/
+*.log
+
+# Xcode user state
+*.xcodeproj/xcuserdata/
+*.xcuserstate
