@@ -23,7 +23,14 @@ final class TabListModel: ObservableObject {
 
     /// Re-read the sidebar (cheap; ~ms for a few hundred tabs).
     func reload() {
-        tabs = (try? SidebarParser.parse()) ?? []
+        do {
+            tabs = try SidebarParser.parse()
+            let spaces = Set(tabs.map(\.spaceTitle)).count
+            Log.write("reload: parsed \(tabs.count) tabs across \(spaces) spaces")
+        } catch {
+            tabs = []
+            Log.write("reload: parse FAILED: \(error)")
+        }
         fillIconCache()
     }
 
