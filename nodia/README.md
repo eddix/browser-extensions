@@ -29,8 +29,8 @@ swift run nodia-probe doc    # headless smoke test of the data layer
 ## Install as an app
 
 ```sh
-./build-app.sh               # builds dist/nodia.app (release, ad-hoc signed)
-cp -R dist/nodia.app /Applications/
+./build-app.sh               # builds .dist/nodia.app (release, ad-hoc signed)
+cp -R .dist/nodia.app /Applications/
 open /Applications/nodia.app
 ```
 
