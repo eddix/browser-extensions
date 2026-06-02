@@ -6,7 +6,9 @@ cd "$(dirname "$0")"
 APP_NAME="nodia"
 BUNDLE_ID="com.eddix.nodia"
 VERSION="1.0.0"
-APP="dist/$APP_NAME.app"
+# Output into a hidden dir so Spotlight/Launchpad don't index this build copy
+# as a second app (the real install lives in /Applications).
+APP=".dist/$APP_NAME.app"
 
 echo "▶ building release…"
 swift build -c release
