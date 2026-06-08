@@ -33,6 +33,15 @@ do {
         print("  \(fav) [\(tab.spaceTitle)] \(tab.title)")
         print("      \(tab.url)")
     }
+
+    // Duplicate clusters.
+    let clusters = DuplicateFinder.clusters(from: tabs)
+    let redundant = clusters.reduce(0) { $0 + $1.duplicates.count }
+    print("\n♻️  duplicate clusters: \(clusters.count), redundant tabs that dedup would close: \(redundant)")
+    for cluster in clusters.prefix(10) {
+        print("  ×\(cluster.count)  \(cluster.keeper.title.prefix(46))")
+        print("       keep [\(cluster.keeper.spaceTitle)] · close: \(cluster.duplicates.map(\.spaceTitle).joined(separator: ", "))")
+    }
 } catch {
     print("❌ \(error)")
     exit(1)
