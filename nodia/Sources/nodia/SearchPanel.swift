@@ -99,9 +99,24 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             let cmd = event.modifierFlags.contains(.command)
+            let shift = event.modifierFlags.contains(.shift)
+
+            // Standard text-editing shortcuts. An accessory app has no Edit menu,
+            // so we forward these straight to the field editor (first responder).
+            if cmd {
+                switch event.keyCode {
+                case 0:  NSApp.sendAction(Selector(("selectAll:")), to: nil, from: nil); return nil // ⌘A
+                case 7:  NSApp.sendAction(Selector(("cut:")), to: nil, from: nil); return nil        // ⌘X
+                case 8:  NSApp.sendAction(Selector(("copy:")), to: nil, from: nil); return nil       // ⌘C
+                case 9:  NSApp.sendAction(Selector(("paste:")), to: nil, from: nil); return nil      // ⌘V
+                case 6:  NSApp.sendAction(Selector((shift ? "redo:" : "undo:")), to: nil, from: nil); return nil // ⌘Z / ⌘⇧Z
+                case 32: self.model.query = ""; return nil                                           // ⌘U clear field
+                case 2:  self.model.toggleMode(); return nil                                         // ⌘D duplicates
+                default: break
+                }
+            }
+
             switch event.keyCode {
-            case 2 where cmd:                                   // ⌘D toggle duplicates
-                self.model.toggleMode(); return nil
             case 125: self.model.moveSelection(1); return nil   // ↓
             case 126: self.model.moveSelection(-1); return nil  // ↑
             case 36, 76:                                        // return / enter
