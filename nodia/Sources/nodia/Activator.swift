@@ -22,13 +22,15 @@ enum Activator {
             activate
             repeat with w in windows
                 repeat with s in spaces of w
-                    repeat with t in tabs of s
-                        if (URL of t) is "\(escaped)" then
-                            tell s to focus
-                            select t
-                            return "ok"
-                        end if
-                    end repeat
+                    try
+                        repeat with t in tabs of s
+                            if (URL of t) is "\(escaped)" then
+                                tell s to focus
+                                select t
+                                return "ok"
+                            end if
+                        end repeat
+                    end try
                 end repeat
             end repeat
         end tell

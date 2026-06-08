@@ -32,6 +32,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     func show() {
         model.reload()
         model.query = ""
+        model.mode = .search
         model.selectedIndex = 0
 
         let panel = panel ?? makePanel()
@@ -68,6 +69,10 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
             model: model,
             themeStore: themeStore,
             onActivate: { [weak self] tab in self?.activate(tab) },
+            onDedupeCluster: { [weak self] cluster in
+                self?.confirmAndClose(cluster.duplicates,
+                                      summary: "“\(cluster.keeper.title)” 的 \(cluster.duplicates.count) 个重复")
+            },
             onOpenSettings: { [weak self] in self?.openSettings() }
         )
         let host = NSHostingView(rootView: root)
@@ -93,10 +98,19 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         removeKeyMonitor()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
+            let cmd = event.modifierFlags.contains(.command)
             switch event.keyCode {
+            case 2 where cmd:                                   // ⌘D toggle duplicates
+                self.model.toggleMode(); return nil
             case 125: self.model.moveSelection(1); return nil   // ↓
             case 126: self.model.moveSelection(-1); return nil  // ↑
-            case 36, 76: self.activateSelected(); return nil    // return / enter
+            case 36, 76:                                        // return / enter
+                if self.model.mode == .duplicates {
+                    if cmd { self.dedupeAll() } else { self.dedupeSelectedCluster() }
+                } else {
+                    self.activateSelected()
+                }
+                return nil
             case 53: self.handleEscape(); return nil            // esc
             default: return event
             }
@@ -111,7 +125,9 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     }
 
     private func handleEscape() {
-        if model.query.isEmpty { hide() } else { model.query = "" }
+        if !model.query.isEmpty { model.query = "" }
+        else if model.mode == .duplicates { model.toggleMode() }
+        else { hide() }
     }
 
     private func activateSelected() {
@@ -123,6 +139,39 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         hide()
         if case .permissionDenied = Activator.activate(tab) {
             presentPermissionAlert()
+        }
+    }
+
+    // MARK: dedupe
+
+    private func dedupeSelectedCluster() {
+        guard let cluster = model.selectedCluster else { return }
+        confirmAndClose(cluster.duplicates,
+                        summary: "“\(cluster.keeper.title)” 的 \(cluster.duplicates.count) 个重复")
+    }
+
+    private func dedupeAll() {
+        let duplicates = model.allDuplicates
+        confirmAndClose(duplicates, summary: "全部 \(duplicates.count) 个重复标签")
+    }
+
+    private func confirmAndClose(_ duplicates: [TabEntry], summary: String) {
+        guard !duplicates.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = "关闭重复标签?"
+        alert.informativeText = "将关闭\(summary),每个页面保留最近活跃的一份。此操作不可撤销。"
+        alert.addButton(withTitle: "关闭")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        if case .permissionDenied = Deduper.execute(closing: duplicates) {
+            presentPermissionAlert()
+            return
+        }
+        // Arc rewrites StorableSidebar.json after closing; refresh shortly.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            self?.model.reload()
+            self?.model.selectedIndex = 0
         }
     }
 
