@@ -160,22 +160,30 @@ private struct TabRow: View {
     let theme: ResolvedTheme
 
     var body: some View {
-        let m = MatchHighlight.matches(query: query, fields: [tab.title, tab.host, tab.spaceTitle])
+        // Highlight fields: title, the displayed URL (host+path), space.
+        let m = MatchHighlight.matches(query: query, fields: [tab.title, tab.prettyURL, tab.spaceTitle])
         HStack(spacing: 10) {
             favicon(icon, theme: theme)
             VStack(alignment: .leading, spacing: 1) {
-                Text(highlighted(tab.title, Set(m[0]), theme: theme))
-                    .lineLimit(1).font(theme.titleFont).foregroundStyle(theme.palette.foreground)
-                (
-                    Text(highlighted(tab.host, Set(m[1]), theme: theme))
-                    + Text("  ·  ")
-                    + Text(highlighted(tab.spaceTitle, Set(m[2]), theme: theme))
-                )
-                .lineLimit(1).font(theme.subtitleFont).foregroundStyle(theme.palette.secondary)
+                HStack(spacing: 8) {
+                    Text(highlighted(tab.title, Set(m[0]), theme: theme))
+                        .lineLimit(1).font(theme.titleFont).foregroundStyle(theme.palette.foreground)
+                    Spacer(minLength: 8)
+                    if !tab.spaceTitle.isEmpty {
+                        Text(highlighted(tab.spaceTitle, Set(m[2]), theme: theme))
+                            .lineLimit(1).font(theme.captionFont)
+                            .foregroundStyle(theme.palette.secondary)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                Text(highlighted(tab.prettyURL, Set(m[1]), theme: theme))
+                    .lineLimit(1).truncationMode(.tail)
+                    .font(theme.subtitleFont).foregroundStyle(theme.palette.secondary)
             }
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .rowChrome(selected: selected, theme: theme)
+        .help(tab.url)
     }
 }
 

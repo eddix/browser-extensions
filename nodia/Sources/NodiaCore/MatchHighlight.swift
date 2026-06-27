@@ -2,27 +2,25 @@ import Foundation
 
 /// Locates which characters of the query matched, for highlighting in the UI.
 ///
-/// Mirrors the fuzzy (subsequence) ranking: the query is consumed greedily,
-/// left to right, across the given fields in order (e.g. title → host → space).
-/// Returns, per field, the character offsets that matched — offsets index the
-/// ORIGINAL field string (by `Character`), so callers can highlight them
-/// directly.
+/// Each field is matched INDEPENDENTLY: a field highlights only if the whole
+/// query is a subsequence of it (so the field that actually matched lights up,
+/// and an unrelated field stays plain). Offsets index the original field string
+/// by `Character`.
 public enum MatchHighlight {
     public static func matches(query: String, fields: [String]) -> [[Int]] {
         let needle = Array(query.lowercased())
-        var result = [[Int]](repeating: [], count: fields.count)
-        guard !needle.isEmpty else { return result }
+        guard !needle.isEmpty else { return fields.map { _ in [] } }
 
-        var qi = 0
-        for (fieldIndex, field) in fields.enumerated() {
+        return fields.map { field in
+            var positions: [Int] = []
+            var qi = 0
             for (charIndex, character) in field.enumerated() {
-                if qi >= needle.count { return result }
-                if String(character).lowercased().first == needle[qi] {
-                    result[fieldIndex].append(charIndex)
+                if qi < needle.count, String(character).lowercased().first == needle[qi] {
+                    positions.append(charIndex)
                     qi += 1
                 }
             }
+            return qi == needle.count ? positions : []
         }
-        return result
     }
 }
