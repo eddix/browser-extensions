@@ -17,5 +17,9 @@ let package = Package(
             name: "nodia",
             dependencies: ["NodiaCore"]
         ),
+        .testTarget(
+            name: "NodiaCoreTests",
+            dependencies: ["NodiaCore"]
+        ),
     ]
 )

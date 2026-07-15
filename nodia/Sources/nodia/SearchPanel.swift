@@ -112,6 +112,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
                 case 6:  NSApp.sendAction(Selector((shift ? "redo:" : "undo:")), to: nil, from: nil); return nil // ⌘Z / ⌘⇧Z
                 case 32: self.model.query = ""; return nil                                           // ⌘U clear field
                 case 2:  self.model.toggleMode(); return nil                                         // ⌘D duplicates
+                case 5:  self.model.toggleDomainMode(); return nil                                   // Cmd+G by-domain
                 default: break
                 }
             }
@@ -142,6 +143,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     private func handleEscape() {
         if !model.query.isEmpty { model.query = "" }
         else if model.mode == .duplicates { model.toggleMode() }
+        else if model.mode == .byDomain { model.toggleDomainMode() }
         else { hide() }
     }
 

@@ -14,7 +14,7 @@ struct SearchView: View {
 
     var body: some View {
         let r = themeStore.resolved
-        let duplicates = model.mode == .duplicates
+        let mode = model.mode
 
         ZStack {
             VisualEffectView(material: r.material).ignoresSafeArea()
@@ -23,11 +23,15 @@ struct SearchView: View {
             }
 
             VStack(spacing: 0) {
-                header(r, duplicates: duplicates)
+                header(r, mode: mode)
                 Divider().overlay(r.palette.foreground.opacity(0.12))
-                if duplicates { duplicateList(r) } else { searchList(r) }
+                switch mode {
+                case .duplicates: duplicateList(r)
+                case .byDomain:   domainList(r)
+                case .search:     searchList(r)
+                }
                 Divider().overlay(r.palette.foreground.opacity(0.12))
-                footer(r, duplicates: duplicates)
+                footer(r, mode: mode)
             }
         }
         .frame(width: 640, height: 420)
@@ -42,11 +46,18 @@ struct SearchView: View {
 
     // MARK: header
 
-    private func header(_ r: ResolvedTheme, duplicates: Bool) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: duplicates ? "rectangle.on.rectangle" : "magnifyingglass")
+    private func header(_ r: ResolvedTheme, mode: TabListModel.Mode) -> some View {
+        let icon: String
+        let placeholder: String
+        switch mode {
+        case .search:     icon = "magnifyingglass";        placeholder = "搜索标签页…"
+        case .duplicates: icon = "rectangle.on.rectangle"; placeholder = "筛选重复…"
+        case .byDomain:   icon = "square.grid.2x2";        placeholder = "按域名筛选…"
+        }
+        return HStack(spacing: 8) {
+            Image(systemName: icon)
                 .foregroundStyle(r.palette.secondary)
-            TextField(duplicates ? "筛选重复…" : "搜索标签页…", text: $model.query)
+            TextField(placeholder, text: $model.query)
                 .textFieldStyle(.plain)
                 .font(r.searchFont)
                 .foregroundStyle(r.palette.foreground)
@@ -125,18 +136,107 @@ struct SearchView: View {
         }
     }
 
+    // MARK: by-domain mode
+
+    private enum DomainRow: Identifiable {
+        case header(domain: String, count: Int)
+        case tab(TabEntry, index: Int)
+
+        var id: String {
+            switch self {
+            case let .header(domain, _): return "h:\(domain)"
+            case let .tab(tab, _):       return "t:\(tab.id)"
+            }
+        }
+    }
+
+    private func domainList(_ r: ResolvedTheme) -> some View {
+        let groups = model.domainGroups
+        // Flatten to display rows; number only the tab rows so the running index
+        // lines up with model.selectedIndex / model.flatDomainTabs.
+        var rows: [DomainRow] = []
+        var flat = 0
+        for group in groups {
+            rows.append(.header(domain: group.domain, count: group.count))
+            for tab in group.tabs {
+                rows.append(.tab(tab, index: flat))
+                flat += 1
+            }
+        }
+
+        return Group {
+            if groups.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 28)).foregroundStyle(r.palette.secondary)
+                    Text(model.query.isEmpty ? "没有标签" : "无匹配")
+                        .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(rows) { row in
+                                switch row {
+                                case let .header(domain, count):
+                                    domainHeader(domain, count: count, r)
+                                case let .tab(tab, index):
+                                    TabRow(tab: tab, icon: model.icon(for: tab),
+                                           selected: index == model.selectedIndex,
+                                           query: model.query, theme: r)
+                                        .id(tab.id)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { onActivate(tab) }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                    }
+                    .onChange(of: model.selectedIndex) { _, index in
+                        let tabs = model.flatDomainTabs
+                        guard tabs.indices.contains(index) else { return }
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(tabs[index].id, anchor: .center)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func domainHeader(_ domain: String, count: Int, _ r: ResolvedTheme) -> some View {
+        HStack(spacing: 6) {
+            Text(domain)
+                .font(r.captionFont.weight(.semibold))
+                .foregroundStyle(r.palette.secondary)
+            Text("· \(count)")
+                .font(r.captionFont)
+                .foregroundStyle(r.palette.secondary.opacity(0.7))
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
+    }
+
     // MARK: footer
 
-    private func footer(_ r: ResolvedTheme, duplicates: Bool) -> some View {
+    private func footer(_ r: ResolvedTheme, mode: TabListModel.Mode) -> some View {
         HStack {
-            if duplicates {
+            switch mode {
+            case .duplicates:
                 Text("\(model.clusters.count) 组重复 · 可清理 \(model.redundantCount) 个")
                 Spacer()
                 Text("⏎ 关这组 · ⌘⏎ 全部 · ⌘D 返回")
-            } else {
+            case .byDomain:
+                Text("\(model.domainGroups.count) 域名 · \(model.flatDomainTabs.count) 标签")
+                Spacer()
+                Text("↑↓ 选择 · ⏎ 打开 · ⌘G 返回 · esc 关闭")
+            case .search:
                 Text("\(model.results.count) 个标签")
                 Spacer()
-                Text("↑↓ 选择 · ⏎ 打开 · ⌘D 去重 · esc 关闭")
+                Text("↑↓ · ⏎ 打开 · ⌘D 去重 · ⌘G 分组 · esc")
             }
         }
         .font(r.captionFont)

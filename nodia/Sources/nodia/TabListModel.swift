@@ -6,7 +6,7 @@ import NodiaCore
 /// derived from `query` + the loaded tabs, so the search field, list, and count
 /// can never drift out of sync (no `@Published` mutated inside another's didSet).
 final class TabListModel: ObservableObject {
-    enum Mode { case search, duplicates }
+    enum Mode { case search, duplicates, byDomain }
 
     @Published var query: String = "" {
         didSet { if selectedIndex != 0 { selectedIndex = 0 } }
@@ -42,19 +42,36 @@ final class TabListModel: ObservableObject {
     var results: [TabEntry] { FuzzyMatcher.rank(tabs, query: query) }
 
     func moveSelection(_ delta: Int) {
-        let count = (mode == .search) ? results.count : clusters.count
+        let count: Int
+        switch mode {
+        case .search:     count = results.count
+        case .duplicates: count = clusters.count
+        case .byDomain:   count = flatDomainTabs.count
+        }
         guard count > 0 else { return }
         selectedIndex = max(0, min(count - 1, selectedIndex + delta))
     }
 
+    /// ⌘D: toggle the duplicates view against search.
     func toggleMode() {
-        mode = (mode == .search) ? .duplicates : .search
+        mode = (mode == .duplicates) ? .search : .duplicates
+        selectedIndex = 0
+    }
+
+    /// ⌘G: toggle the by-domain view against search.
+    func toggleDomainMode() {
+        mode = (mode == .byDomain) ? .search : .byDomain
         selectedIndex = 0
     }
 
     var selectedTab: TabEntry? {
-        let r = results
-        return r.indices.contains(selectedIndex) ? r[selectedIndex] : nil
+        let list: [TabEntry]
+        switch mode {
+        case .search:     list = results
+        case .byDomain:   list = flatDomainTabs
+        case .duplicates: return nil   // duplicates mode selects clusters, not tabs
+        }
+        return list.indices.contains(selectedIndex) ? list[selectedIndex] : nil
     }
 
     // Duplicate clusters (most-duplicated first), filtered by the current query
@@ -75,6 +92,21 @@ final class TabListModel: ObservableObject {
         return c.indices.contains(selectedIndex) ? c[selectedIndex] : nil
     }
     var allDuplicates: [TabEntry] { clusters.flatMap(\.duplicates) }
+
+    // Tabs grouped by domain (arc-tab-sorter parity), filtered by the current
+    // query as a plain substring over title/url/domain. `flatDomainTabs` is the
+    // group order flattened — the view renders `domainGroups`, the keyboard
+    // walks `flatDomainTabs`, and both stay in lockstep via `selectedIndex`.
+    var domainGroups: [DomainGroup] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let filtered = q.isEmpty ? tabs : tabs.filter {
+            $0.title.lowercased().contains(q)
+                || $0.url.lowercased().contains(q)
+                || DomainFinder.domain(for: $0).lowercased().contains(q)
+        }
+        return DomainFinder.groups(from: filtered)
+    }
+    var flatDomainTabs: [TabEntry] { domainGroups.flatMap(\.tabs) }
 
     func icon(for tab: TabEntry) -> NSImage? { iconCache[tab.url] }
 
