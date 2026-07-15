@@ -34,7 +34,7 @@ struct SearchView: View {
                 footer(r, mode: mode)
             }
         }
-        .frame(width: 640, height: 420)
+        .frame(width: 640, height: 460)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -46,54 +46,84 @@ struct SearchView: View {
 
     // MARK: header
 
+    // Raycast-style header: no leading icon in plain search (the placeholder is
+    // enough); duplicates/byDomain show a tinted context chip instead, so the
+    // active mode is visible at a glance.
     private func header(_ r: ResolvedTheme, mode: TabListModel.Mode) -> some View {
-        let icon: String
         let placeholder: String
         switch mode {
-        case .search:     icon = "magnifyingglass";        placeholder = "搜索标签页…"
-        case .duplicates: icon = "rectangle.on.rectangle"; placeholder = "筛选重复…"
-        case .byDomain:   icon = "square.grid.2x2";        placeholder = "按域名筛选…"
+        case .search:     placeholder = "搜索标签页…"
+        case .duplicates: placeholder = "筛选重复…"
+        case .byDomain:   placeholder = "按域名筛选…"
         }
-        return HStack(spacing: 8) {
-            Image(systemName: icon)
-                .foregroundStyle(r.palette.secondary)
+        return HStack(spacing: 10) {
+            switch mode {
+            case .duplicates: modeChip("重复标签", icon: "rectangle.on.rectangle", r)
+            case .byDomain:   modeChip("按域名", icon: "square.grid.2x2", r)
+            case .search:     EmptyView()
+            }
             TextField(placeholder, text: $model.query)
                 .textFieldStyle(.plain)
                 .font(r.searchFont)
                 .foregroundStyle(r.palette.foreground)
                 .focused($searchFocused)
             Button(action: onOpenSettings) {
-                Image(systemName: "gearshape").foregroundStyle(r.palette.secondary)
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13))
+                    .foregroundStyle(r.palette.secondary.opacity(0.7))
             }
             .buttonStyle(.plain)
             .help("设置")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    private func modeChip(_ label: String, icon: String, _ r: ResolvedTheme) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+            Text(label).font(r.captionFont.weight(.semibold))
+        }
+        .foregroundStyle(r.palette.accent)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(r.palette.accent.opacity(0.15))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     // MARK: search mode
 
     private func searchList(_ r: ResolvedTheme) -> some View {
         let results = model.results
-        return ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(Array(results.enumerated()), id: \.element.id) { index, tab in
-                        TabRow(tab: tab, icon: model.icon(for: tab),
-                               selected: index == model.selectedIndex,
-                               query: model.query, theme: r)
-                            .contentShape(Rectangle())
-                            .onTapGesture { onActivate(tab) }
-                    }
+        return Group {
+            if results.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 28)).foregroundStyle(r.palette.secondary)
+                    Text(model.query.isEmpty ? "没有标签" : "无匹配")
+                        .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-            }
-            .onChange(of: model.selectedIndex) { _, index in
-                guard results.indices.contains(index) else { return }
-                withAnimation(.easeOut(duration: 0.12)) {
-                    proxy.scrollTo(results[index].id, anchor: .center)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            ForEach(Array(results.enumerated()), id: \.element.id) { index, tab in
+                                TabRow(tab: tab, icon: model.icon(for: tab),
+                                       selected: index == model.selectedIndex,
+                                       query: model.query, theme: r)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { onActivate(tab) }
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                    }
+                    .onChange(of: model.selectedIndex) { _, index in
+                        guard results.indices.contains(index) else { return }
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(results[index].id, anchor: .center)
+                        }
+                    }
                 }
             }
         }
@@ -215,34 +245,41 @@ struct SearchView: View {
                 .foregroundStyle(r.palette.secondary.opacity(0.7))
             Spacer()
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 8)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
         .padding(.bottom, 2)
     }
 
     // MARK: footer
 
+    // Raycast-style footer: count on the left, keycap hint chips on the right
+    // (2-3 max — arrows/esc are muscle memory, not worth the clutter).
     private func footer(_ r: ResolvedTheme, mode: TabListModel.Mode) -> some View {
-        HStack {
+        HStack(spacing: 14) {
             switch mode {
             case .duplicates:
                 Text("\(model.clusters.count) 组重复 · 可清理 \(model.redundantCount) 个")
                 Spacer()
-                Text("⏎ 关这组 · ⌘⏎ 全部 · ⌘D 返回")
+                KeyHint(label: "关这组", keys: ["⏎"], theme: r)
+                KeyHint(label: "全部", keys: ["⌘", "⏎"], theme: r)
+                KeyHint(label: "返回", keys: ["⌘", "D"], theme: r)
             case .byDomain:
                 Text("\(model.domainGroups.count) 域名 · \(model.flatDomainTabs.count) 标签")
                 Spacer()
-                Text("↑↓ 选择 · ⏎ 打开 · ⌘G 返回 · esc 关闭")
+                KeyHint(label: "打开", keys: ["⏎"], theme: r)
+                KeyHint(label: "返回", keys: ["⌘", "G"], theme: r)
             case .search:
                 Text("\(model.results.count) 个标签")
                 Spacer()
-                Text("↑↓ · ⏎ 打开 · ⌘D 去重 · ⌘G 分组 · esc")
+                KeyHint(label: "打开", keys: ["⏎"], theme: r)
+                KeyHint(label: "去重", keys: ["⌘", "D"], theme: r)
+                KeyHint(label: "分组", keys: ["⌘", "G"], theme: r)
             }
         }
         .font(r.captionFont)
         .foregroundStyle(r.palette.secondary)
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 9)
     }
 
     private func focusSoon() {
@@ -313,6 +350,33 @@ private struct ClusterRow: View {
     }
 }
 
+/// One "label + keycaps" footer hint, e.g. 打开 [⏎] or 分组 [⌘][G].
+private struct KeyHint: View {
+    let label: String
+    let keys: [String]
+    let theme: ResolvedTheme
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(label)
+                .font(theme.captionFont)
+                .foregroundStyle(theme.palette.secondary)
+            HStack(spacing: 2) {
+                ForEach(keys, id: \.self) { key in
+                    Text(key)
+                        .font(theme.captionFont.weight(.medium))
+                        .foregroundStyle(theme.palette.secondary)
+                        .frame(minWidth: 13)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(theme.palette.foreground.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+            }
+        }
+    }
+}
+
 @ViewBuilder
 private func favicon(_ icon: NSImage?, theme: ResolvedTheme) -> some View {
     Group {
@@ -322,16 +386,17 @@ private func favicon(_ icon: NSImage?, theme: ResolvedTheme) -> some View {
             Image(systemName: "globe").resizable().foregroundStyle(theme.palette.secondary)
         }
     }
-    .frame(width: 16, height: 16)
+    .frame(width: 18, height: 18)
+    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
 }
 
 private extension View {
     func rowChrome(selected: Bool, theme: ResolvedTheme) -> some View {
         self
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
             .background(selected ? theme.palette.selection : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 

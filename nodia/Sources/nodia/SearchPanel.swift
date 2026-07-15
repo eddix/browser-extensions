@@ -53,7 +53,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
 
     private func makePanel() -> KeyPanel {
         let panel = KeyPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 460),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -76,7 +76,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
             onOpenSettings: { [weak self] in self?.openSettings() }
         )
         let host = NSHostingView(rootView: root)
-        host.frame = NSRect(x: 0, y: 0, width: 640, height: 420)
+        host.frame = NSRect(x: 0, y: 0, width: 640, height: 460)
         host.autoresizingMask = [.width, .height]
         panel.contentView = host
         return panel
