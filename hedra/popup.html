@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg2: #f6f8fa;
+    --fg: #1f2328;
+    --muted: #656d76;
+    --border: #d0d7de;
+    --accent: #0969da;
+    --green: #1f883d;
+    --warn-fg: #9a6700;
+    --warn-bg: #fff8c5;
+    --info-fg: #0969da;
+    --info-bg: #ddf4ff;
+    --danger: #cf222e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1f24;
+      --bg2: #22262c;
+      --fg: #e6edf3;
+      --muted: #8b949e;
+      --border: #383e46;
+      --accent: #539bf5;
+      --green: #3fb950;
+      --warn-fg: #d4a72c;
+      --warn-bg: #3a3520;
+      --info-fg: #539bf5;
+      --info-bg: #263441;
+      --danger: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    width: 400px;
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 15px; font-weight: 700; }
+
+  /* 总开关 */
+  .switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span {
+    position: absolute; inset: 0;
+    background: var(--border);
+    border-radius: 10px;
+    transition: background .15s;
+  }
+  .switch span::before {
+    content: "";
+    position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    background: var(--bg);
+    border-radius: 50%;
+    transition: transform .15s;
+  }
+  .switch input:checked + span { background: var(--green); }
+  .switch input:checked + span::before { transform: translateX(16px); }
+
+  main { max-height: 460px; overflow-y: auto; }
+
+  .empty { padding: 28px 14px; text-align: center; color: var(--muted); }
+
+  .preset {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .preset:hover { background: var(--bg2); }
+  .preset .meta { flex: 1; min-width: 0; }
+  .preset .name { font-weight: 600; }
+  .preset .sub {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .preset.off .name, .preset.off .sub { color: var(--muted); }
+
+  .mark {
+    border: none;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .mark.warning { background: var(--warn-bg); color: var(--warn-fg); }
+  .mark.info { background: var(--info-bg); color: var(--info-fg); }
+
+  .details {
+    padding: 6px 14px 10px 36px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .details .warning { color: var(--warn-fg); }
+  .details .info { color: var(--info-fg); }
+
+  button {
+    font: inherit;
+    color: var(--fg);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+  button.danger { color: var(--danger); }
+  button.link {
+    background: none; border: none; padding: 2px 4px;
+    color: var(--accent);
+  }
+
+  footer {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+  }
+  footer .spacer { flex: 1; }
+
+  /* 编辑表单 */
+  .editor { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .editor .field { display: block; }
+  .editor .field b { display: block; margin-bottom: 3px; font-size: 12px; }
+  .editor .hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  input[type="text"], select {
+    font: inherit;
+    width: 100%;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+  }
+  input[type="text"]:focus, select:focus { outline: none; border-color: var(--accent); }
+  input:disabled { background: var(--bg2); color: var(--muted); }
+
+  .domain-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .domain-row input.dhost { flex: 1; min-width: 0; }
+  .domain-row button.rm { flex: none; padding: 4px 8px; }
+
+  /* 两行一组：side/op/名称/删除 一行，值独占一行（长值如泳道名放得下） */
+  .rule-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .rule-row select.side { width: 86px; flex: none; }
+  .rule-row select.op { width: 76px; flex: none; }
+  .rule-row input.hname { flex: 1; min-width: 0; }
+  .rule-row input.hvalue { flex: none; width: 100%; }
+  .rule-row button.rm { flex: none; padding: 4px 8px; }
+  [hidden] { display: none !important; }
+
+  .editor .actions { display: flex; gap: 8px; margin-top: 4px; }
+  .editor .actions .spacer { flex: 1; }
+
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: 14px;
+    transform: translateX(-50%);
+    max-width: 90%;
+    background: var(--fg);
+    color: var(--bg);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12px;
+    z-index: 10;
+  }
+  #toast.error { background: var(--danger); color: #fff; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>hedra</h1>
+    <label class="switch" title="总开关">
+      <input type="checkbox" id="master">
+      <span></span>
+    </label>
+  </header>
+  <main id="app"></main>
+  <footer id="footer">
+    <button id="btn-new" class="primary">＋ 新建预设</button>
+    <span class="spacer"></span>
+    <button id="btn-import">导入</button>
+    <button id="btn-export">导出</button>
+    <input type="file" id="file" accept=".json,application/json" hidden>
+  </footer>
+  <div id="toast" hidden></div>
+  <script src="popup.js"></script>
+</body>
+</html>

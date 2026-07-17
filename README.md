@@ -4,9 +4,13 @@ A small collection of self-made browser tools.
 
 ## Projects
 
-### [arc-tab-sorter](./arc-tab-sorter)
-A Manifest V3 browser extension: a toolbar popup that lists and searches the
-current Arc tabs, grouped by domain. Limited to tabs the browser has realized.
+### [hedra](./hedra)
+A Manifest V3 extension that adds, overrides, or removes HTTP request/response
+headers per domain, driven by toggleable presets. A zero-telemetry ModHeader
+replacement: pure `declarativeNetRequest`, so the extension never sees page
+content or traffic. Most-specific-domain-wins priority, live conflict
+detection, and radio-style exclusive presets for switching PPE lanes.
+See [hedra/README.md](./hedra/README.md).
 
 ### [nodia](./nodia)
 A native macOS menu-bar app that fuzzy-searches **all** Arc sidebar tabs —
