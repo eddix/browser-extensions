@@ -20,6 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Without a main menu, ⌘C/⌘V/⌘X/⌘A/⌘Z do nothing in any text field:
+        // those shortcuts are dispatched by the Edit menu, and an accessory app
+        // has no menu bar to put one in. The menu never appears on screen — it
+        // exists purely so key equivalents reach the first responder. The search
+        // panel solves this with its own event monitor; installing the menu here
+        // covers every window, including Settings.
+        NSApp.mainMenu = Self.makeMainMenu()
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.image = Self.makeStatusIcon()
@@ -50,6 +58,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] in
             self?.panel.toggle()
         }
+    }
+
+    /// The invisible menu that makes text editing work.
+    ///
+    /// Selectors are built from strings rather than `#selector`: these are
+    /// responder-chain messages (`NSResponder`/`NSText`), not methods on any
+    /// type this file can name, and `copy:` in particular collides with
+    /// `NSObject.copy()` when written as a `#selector`.
+    private static func makeMainMenu() -> NSMenu {
+        let main = NSMenu()
+
+        // AppKit expects the first item to be the application menu.
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "Quit nodia",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        let entries: [(String, String, String)] = [
+            ("Undo", "undo:", "z"),
+            ("Redo", "redo:", "Z"),        // capital Z means ⌘⇧Z
+            ("", "", ""),                  // separator
+            ("Cut", "cut:", "x"),
+            ("Copy", "copy:", "c"),
+            ("Paste", "paste:", "v"),
+            ("Select All", "selectAll:", "a"),
+        ]
+        for (title, selector, key) in entries {
+            if title.isEmpty {
+                edit.addItem(.separator())
+            } else {
+                edit.addItem(withTitle: title, action: Selector((selector)), keyEquivalent: key)
+            }
+        }
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        return main
     }
 
     /// Monochrome "A+" template glyph for the menu bar (matches the app icon).
