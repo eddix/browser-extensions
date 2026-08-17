@@ -318,6 +318,42 @@ final class SummarizerTests: XCTestCase {
                        "只有 400 才是参数被拒，5xx 是服务端问题")
     }
 
+    // MARK: - How much of the page is sent
+
+    func testShortPagesAreSentWhole() {
+        let text = String(repeating: "文", count: 100)
+        XCTAssertEqual(Summarizer.condense(text, limit: 1000), text)
+    }
+
+    /// The failure this exists for: a doc whose last section says the thing is
+    /// decommissioned. A head-only cap drops it and the summary reads as if the
+    /// content were current.
+    func testTheEndOfALongPageSurvives() {
+        let body = String(repeating: "正", count: 5000)
+        let conclusion = "最终结论：已于 2026 年 7 月下线，迁移至 Falcon 通道。"
+        let condensed = Summarizer.condense(body + conclusion, limit: 1000)
+
+        XCTAssertTrue(condensed.contains("Falcon"), "结论在末尾，必须保留")
+        XCTAssertTrue(condensed.hasPrefix("正正正"), "开头也要保留")
+        XCTAssertTrue(condensed.contains("中间略去"), "要说明中间被省略了")
+    }
+
+    /// Weighted toward the head — that's where a page says what it is — but
+    /// never so far that the tail vanishes.
+    func testCondensedTextStaysWithinBudget() {
+        let text = String(repeating: "字", count: 50_000)
+        let condensed = Summarizer.condense(text, limit: 1000)
+        // The elision marker is the only thing added beyond the limit.
+        XCTAssertLessThan(condensed.count, 1000 + 40)
+        XCTAssertGreaterThan(condensed.count, 900)
+    }
+
+    /// 6000 characters was roughly 3000 tokens against a window that accepted
+    /// 720,012 — the cap was never the constraint people assumed it was.
+    func testContentBudgetIsNotStuckAtTheOldCap() {
+        XCTAssertGreaterThanOrEqual(Summarizer.maxContentChars, 32000)
+    }
+
     func testRequestCarriesTheBudgetItWasGiven() throws {
         let endpoint = Summarizer.Endpoint(
             url: "https://x.test/v1/messages", model: "m",

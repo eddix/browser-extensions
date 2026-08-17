@@ -9,9 +9,13 @@
 
 const DEFAULT_API_BASE = 'http://127.0.0.1:8787';
 
-/** Longest page extract we ship for summarizing. Enough for a summary, small
- *  enough to stay a single quick request. */
-const MAX_CONTENT_CHARS = 8000;
+/** Longest page extract we ship for summarizing.
+ *
+ *  Matches the app's own limit, which trims further if needed — and trims from
+ *  the middle, because a document's conclusion is at its end. This used to be
+ *  8000 against a backend that cut to 6000, so a quarter of what was read off
+ *  the page was shipped and thrown away. */
+const MAX_CONTENT_CHARS = 32000;
 
 async function getConfig() {
   const { apiBase, token } = await chrome.storage.local.get(['apiBase', 'token']);
@@ -97,7 +101,16 @@ function extractPageText(limit) {
     .replace(/[​-‏⁠-⁤﻿]/g, '') // 文档平台标题/正文的零宽水印字符
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  return text.slice(0, limit);
+
+  if (text.length <= limit) return text;
+  // Keep both ends. This is the only place that sees the whole page, so a
+  // plain head cut here is unrecoverable downstream — and what it cuts is the
+  // conclusion, which internal docs put at the bottom ("下线了，9 月底前改造完").
+  // Weighted toward the head, where a page says what it is.
+  const head = Math.floor(limit * 0.7);
+  return text.slice(0, head)
+    + `\n\n…（中间略去 ${text.length - limit} 字）…\n\n`
+    + text.slice(text.length - (limit - head));
 }
 
 async function grabContent(tabId) {

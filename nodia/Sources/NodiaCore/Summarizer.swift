@@ -178,7 +178,7 @@ public struct Summarizer: Sendable {
                 key: key,
                 url: requestURL,
                 title: title,
-                content: String(content.prefix(6000)),
+                content: Self.condense(content),
                 maxTokens: budget
             )
 
@@ -264,6 +264,33 @@ public struct Summarizer: Sendable {
     /// Smaller gateways cap output far below Ark's 128000, and being wrong
     /// about a cap shouldn't cost every summary.
     static let fallbackMaxTokens = 8192
+
+    /// How much page text is sent. Unrelated to `max_tokens`, which bounds the
+    /// reply — this is bounded by the context window, and there is far more of
+    /// that than anyone was using: 6000 characters is roughly 3000 tokens, and
+    /// this endpoint accepted a 720,012-token input without complaint.
+    ///
+    /// Kept well below the window anyway, since the cost of more input is the
+    /// model reading it, not the room to hold it.
+    static let maxContentChars = 32000
+
+    /// Trims page text to fit, keeping both ends.
+    ///
+    /// A plain `prefix` cap drops exactly the part that matters most: internal
+    /// docs put the conclusion at the bottom. Measured on a 13,470-character
+    /// page whose last section read "decommissioned in July, migrate by
+    /// September" — cut to its first 6000 characters, the summary described the
+    /// modules as current and never mentioned that the whole thing was dead.
+    /// A wrong summary is worse than a short one, because it's the version you
+    /// find months later and believe.
+    static func condense(_ text: String, limit: Int = maxContentChars) -> String {
+        guard text.count > limit, limit > 0 else { return text }
+        let head = limit * 7 / 10
+        let tail = limit - head
+        return String(text.prefix(head))
+            + "\n\n…（中间略去 \(text.count - limit) 字）…\n\n"
+            + String(text.suffix(tail))
+    }
 
     /// Completes a configured address into the endpoint actually being called.
     ///
