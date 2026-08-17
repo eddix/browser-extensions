@@ -152,9 +152,35 @@ public struct Summarizer: Sendable {
         }
     }
 
+    /// How far along a summary is, reported while the model is still writing.
+    ///
+    /// A reasoning model spends most of a request thinking, during which a
+    /// non-streaming caller sees nothing at all — indistinguishable from a
+    /// connection that died. These two counts are the evidence that data is
+    /// still arriving.
+    public struct Progress: Sendable, Equatable {
+        /// Characters of reasoning so far. Usually the bulk of the wait.
+        public var thinkingChars: Int = 0
+        /// Characters of the answer itself, which only start once thinking ends.
+        public var textChars: Int = 0
+
+        public init(thinkingChars: Int = 0, textChars: Int = 0) {
+            self.thinkingChars = thinkingChars
+            self.textChars = textChars
+        }
+    }
+
     /// Never throws and never blocks the save: a link with no summary is still
     /// a saved link, so every failure comes back as a reason to show.
-    public func summarize(title: String, url: String, content: String) async -> Outcome {
+    ///
+    /// `onProgress` fires on every delta — many times a second — so it must be
+    /// cheap and safe to call from the URLSession task.
+    public func summarize(
+        title: String,
+        url: String,
+        content: String,
+        onProgress: @escaping @Sendable (Progress) -> Void = { _ in }
+    ) async -> Outcome {
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .failed(reason: "没抓到正文")
         }
@@ -185,31 +211,29 @@ public struct Summarizer: Sendable {
             )
 
             do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                    let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                switch try await Self.stream(request, wire: endpoint.wire, onProgress: onProgress) {
+                case .http(let code, let body):
                     // The body carries the actual reason (bad model name, missing
                     // header, rejected parameter) — without it every failure looks
                     // the same.
-                    let detail = String(data: data, encoding: .utf8)?.prefix(300) ?? ""
-                    Log.write("summary failed: HTTP \(code) at max_tokens=\(budget) for \(url) — \(detail)")
+                    Log.write("summary failed: HTTP \(code) at max_tokens=\(budget) for \(url) — \(body)")
                     // A rejected budget is the one failure a second attempt can
                     // fix. Everything else — bad key, unknown model — would fail
                     // identically, so don't spend another round trip on it.
-                    if Self.rejectedTheTokenBudget(code: code, body: String(detail)),
+                    if Self.rejectedTheTokenBudget(code: code, body: body),
                        budget != Self.fallbackMaxTokens {
                         continue
                     }
                     return .failed(reason: "模型返回 HTTP \(code)")
-                }
-                switch Self.extractText(wire: endpoint.wire, data: data) {
-                case .text(let text):
+
+                case .ok(.text(let text)):
                     guard let result = Self.parseResult(text) else {
                         Log.write("summary failed: empty reply for \(url)")
                         return .failed(reason: "模型返回了空内容")
                     }
                     return .summarized(result)
-                case .failed(let reason, let detail):
+
+                case .ok(.failed(let reason, let detail)):
                     Log.write("summary failed: \(detail) for \(url)")
                     return .failed(reason: reason)
                 }
@@ -219,6 +243,168 @@ public struct Summarizer: Sendable {
             }
         }
         return .failed(reason: "模型不接受这个输出长度上限")
+    }
+
+    /// The outcome of one request attempt.
+    enum Attempt {
+        case ok(Extraction)
+        case http(code: Int, body: String)
+    }
+
+    /// Runs one request as a stream.
+    ///
+    /// Streaming isn't here for a typing effect — it's the only way to tell a
+    /// model that is thinking from a connection that has died. Deltas arrive
+    /// every second or two throughout the reasoning phase, which both gives the
+    /// panel something to show and lets `timeoutInterval` mean what it says:
+    /// it's an *idle* timer, so with a stream it fires on real silence instead
+    /// of on a slow-but-healthy answer.
+    static func stream(
+        _ request: URLRequest,
+        wire: WireProtocol,
+        onProgress: @escaping @Sendable (Progress) -> Void
+    ) async throws -> Attempt {
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let http = response as? HTTPURLResponse
+        let code = http?.statusCode ?? -1
+
+        guard code == 200 else {
+            var body = ""
+            for try await line in bytes.lines {
+                body += line
+                if body.count > 300 { break }
+            }
+            return .http(code: code, body: body)
+        }
+
+        // A gateway is free to ignore `stream: true` and answer with one JSON
+        // body. Falling back to whole-body parsing costs nothing and keeps the
+        // summary working rather than failing on a technicality.
+        let contentType = (http?.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+        guard contentType.contains("event-stream") else {
+            var body = ""
+            for try await line in bytes.lines { body += line }
+            return .ok(extractText(wire: wire, data: Data(body.utf8)))
+        }
+
+        var acc = StreamAccumulator(wire: wire)
+        for try await line in bytes.lines {
+            guard acc.consume(line: line) else { break }
+            onProgress(acc.progress)
+        }
+        return .ok(acc.extraction())
+    }
+
+    /// Assembles a streamed reply.
+    ///
+    /// Both wires deliver the same three things — reasoning, answer text, and a
+    /// terminal reason — in different envelopes, so the difference is confined
+    /// to `consume` and everything downstream is shared.
+    struct StreamAccumulator {
+        let wire: WireProtocol
+        private(set) var text = ""
+        private(set) var progress = Progress()
+        private(set) var stopReason: String?
+        private(set) var outputTokens: Int?
+        private(set) var streamError: String?
+
+        init(wire: WireProtocol) { self.wire = wire }
+
+        /// Feeds one raw SSE line. Returns false when the stream said it's done.
+        ///
+        /// Only `data:` carries payload — `event:` restates the type already in
+        /// the JSON, and blank lines separate records. An unparseable line is
+        /// skipped rather than failing the whole summary: one malformed record
+        /// shouldn't discard everything already received.
+        mutating func consume(line: String) -> Bool {
+            guard line.hasPrefix("data:") else { return true }
+            let payload = line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
+            // OpenAI terminates with a sentinel; Anthropic just stops.
+            if payload == "[DONE]" { return false }
+            guard let data = payload.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return true }
+            consume(json)
+            return true
+        }
+
+        mutating func consume(_ json: [String: Any]) {
+            switch wire {
+            case .anthropic: consumeAnthropic(json)
+            case .openai: consumeOpenAI(json)
+            }
+        }
+
+        private mutating func consumeAnthropic(_ json: [String: Any]) {
+            switch json["type"] as? String {
+            case "content_block_delta":
+                guard let delta = json["delta"] as? [String: Any] else { return }
+                switch delta["type"] as? String {
+                case "text_delta":
+                    append(delta["text"] as? String)
+                case "thinking_delta":
+                    progress.thinkingChars += (delta["thinking"] as? String ?? "").count
+                default:
+                    break  // input_json_delta — tool calls, which this never asks for
+                }
+            case "message_delta":
+                if let d = json["delta"] as? [String: Any], let r = d["stop_reason"] as? String {
+                    stopReason = r
+                }
+                if let u = json["usage"] as? [String: Any], let t = u["output_tokens"] as? Int {
+                    outputTokens = t
+                }
+            case "error":
+                streamError = (json["error"] as? [String: Any])?["message"] as? String ?? "未知错误"
+            default:
+                // message_start / content_block_start / content_block_stop /
+                // message_stop carry no content, and `ping` is a keepalive.
+                break
+            }
+        }
+
+        private mutating func consumeOpenAI(_ json: [String: Any]) {
+            if let err = json["error"] as? [String: Any] {
+                streamError = err["message"] as? String ?? "未知错误"
+                return
+            }
+            if let usage = json["usage"] as? [String: Any] {
+                outputTokens = usage["completion_tokens"] as? Int ?? usage["output_tokens"] as? Int
+            }
+            guard let choice = (json["choices"] as? [[String: Any]])?.first else { return }
+            if let reason = choice["finish_reason"] as? String { stopReason = reason }
+            guard let delta = choice["delta"] as? [String: Any] else { return }
+            append(delta["content"] as? String)
+            // Reasoning models on OpenAI-compatible gateways put their thinking
+            // in a sibling field rather than in `content`.
+            progress.thinkingChars += (delta["reasoning_content"] as? String ?? "").count
+        }
+
+        private mutating func append(_ chunk: String?) {
+            guard let chunk, !chunk.isEmpty else { return }
+            text += chunk
+            progress.textChars = text.count
+        }
+
+        /// Truncation is named on both wires: Anthropic says `max_tokens`,
+        /// OpenAI says `length`.
+        private var truncated: Bool { stopReason == "max_tokens" || stopReason == "length" }
+
+        func extraction() -> Extraction {
+            if let streamError {
+                return .failed(reason: "模型返回错误：\(streamError)",
+                               detail: "stream error: \(streamError)")
+            }
+            guard !text.isEmpty else {
+                let detail = "stop_reason=\(stopReason ?? "none"), "
+                    + "thinking=\(progress.thinkingChars) chars, text=0"
+                if truncated {
+                    return .failed(reason: Summarizer.truncatedReason, detail: detail)
+                }
+                return .failed(reason: "模型返回了空内容", detail: "empty stream (\(detail))")
+            }
+            return .text(text)
+        }
     }
 
     /// Whether a 400 is the endpoint objecting to `max_tokens` specifically.
@@ -261,6 +447,11 @@ public struct Summarizer: Sendable {
     /// Any budget fitted to the average silently truncates the tail, which is
     /// what 1024 was doing: a full thinking block and an empty text one.
     static let maxTokens = 32768
+
+    /// The one failure the user can act on, so it gets its own wording rather
+    /// than "unexpected response" — the action isn't obvious from a generic
+    /// message. Shared by the streaming and whole-body paths.
+    static let truncatedReason = "模型思考占满了输出额度，没留下摘要正文"
 
     /// Tried once if the endpoint rejects the budget above as too large.
     /// Smaller gateways cap output far below Ark's 128000, and being wrong
@@ -359,6 +550,7 @@ public struct Summarizer: Sendable {
                 ],
                 "max_tokens": maxTokens,
                 "temperature": 0.3,
+                "stream": true,
             ]
 
         case .anthropic:
@@ -376,6 +568,7 @@ public struct Summarizer: Sendable {
                 "max_tokens": maxTokens,
                 "system": Self.instruction,
                 "messages": [["role": "user", "content": userText]],
+                "stream": true,
             ]
         }
 
@@ -433,9 +626,6 @@ public struct Summarizer: Sendable {
             return .failed(reason: "模型返回的不是 JSON", detail: "response was not JSON")
         }
 
-        // Truncation is worth naming on both wires: it's the one failure the
-        // user can act on, and the action isn't obvious from "it failed".
-        let truncated = "模型思考占满了输出额度，没留下摘要正文"
 
         switch wire {
         case .openai:
@@ -448,7 +638,7 @@ public struct Summarizer: Sendable {
             }
             guard let text = message["content"] as? String, !text.isEmpty else {
                 if first["finish_reason"] as? String == "length" {
-                    return .failed(reason: truncated, detail: "finish_reason=length, empty content")
+                    return .failed(reason: truncatedReason, detail: "finish_reason=length, empty content")
                 }
                 return .failed(reason: "模型返回了空内容", detail: "choices[0].message.content empty")
             }
@@ -482,7 +672,7 @@ public struct Summarizer: Sendable {
                         .compactMap { ($0["thinking"] as? String)?.count }
                         .reduce(0, +)
                     return .failed(
-                        reason: truncated,
+                        reason: truncatedReason,
                         detail: "stop_reason=max_tokens, thinking=\(thought) chars, text=0"
                     )
                 }

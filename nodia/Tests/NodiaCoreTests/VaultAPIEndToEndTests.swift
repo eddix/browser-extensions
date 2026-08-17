@@ -25,8 +25,11 @@ final class VaultAPIEndToEndTests: XCTestCase {
         self.captured = captured
         // Stand-in summarizer: records the page text it was handed and returns
         // a fixed summary, so the route can be tested without a model.
-        let api = VaultAPI(store: store) { _, _, content, done in
+        let api = VaultAPI(store: store) { _, _, content, onProgress, done in
             captured.append([content])
+            // Emit one progress tick so the polling endpoint has something to
+            // report, exactly as a real streamed summary would.
+            onProgress(Summarizer.Progress(thinkingChars: 42, textChars: 7))
             done(VaultAPI.Preview(
                 summary: content.isEmpty ? nil : "摘要：\(content)",
                 keywords: content.isEmpty ? [] : ["关键词A", "关键词B"],
@@ -85,6 +88,51 @@ final class VaultAPIEndToEndTests: XCTestCase {
         f.locale = Locale(identifier: "en_US_POSIX")
         let file = root.appendingPathComponent("Bookmark/01-Inbox/links-\(f.string(from: Date())).md")
         return (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+    }
+
+    // MARK: - Watching a summary as it's written
+
+    /// The panel polls this once a second during a wait that can run 40s. It
+    /// has to report real counters, not just "busy".
+    func testProgressEndpointReportsWhatTheModelHasWritten() throws {
+        let payload = Data("""
+        {"title":"甲","url":"https://example.com/a","kind":"readlater","content":"正文若干"}
+        """.utf8)
+        let preview = try send("/api/preview?job=job-abc", method: "POST", body: payload)
+        XCTAssertEqual(preview.status, 200, preview.body)
+
+        // The stand-in summarizer emitted one tick before finishing, so the
+        // entry survives the request and carries those counts.
+        let progress = try send("/api/preview-progress?job=job-abc")
+        XCTAssertEqual(progress.status, 200)
+        XCTAssertTrue(progress.body.contains("\"found\":true"), progress.body)
+        XCTAssertTrue(progress.body.contains("\"thinking_chars\":42"), progress.body)
+        XCTAssertTrue(progress.body.contains("\"text_chars\":7"), progress.body)
+        XCTAssertTrue(progress.body.contains("\"done\":true"),
+                      "预览已返回，轮询应看到完成而不是「查无此任务」：\(progress.body)")
+    }
+
+    /// A poll for a job that never started is "nothing to show", not an error —
+    /// the panel polls before the request has necessarily registered.
+    func testProgressForUnknownJobIsNotAnError() throws {
+        let r = try send("/api/preview-progress?job=never-started")
+        XCTAssertEqual(r.status, 200)
+        XCTAssertTrue(r.body.contains("\"found\":false"), r.body)
+    }
+
+    func testProgressRequiresAJob() throws {
+        XCTAssertEqual(try send("/api/preview-progress").status, 400)
+    }
+
+    /// A preview without a job id must still work — the id is optional, and a
+    /// client that doesn't poll shouldn't be forced to invent one.
+    func testPreviewWithoutJobIdStillSummarizes() throws {
+        let payload = Data("""
+        {"title":"乙","url":"https://example.com/b","kind":"readlater","content":"正文"}
+        """.utf8)
+        let r = try send("/api/preview", method: "POST", body: payload)
+        XCTAssertEqual(r.status, 200)
+        XCTAssertTrue(r.body.contains("摘要：正文"), r.body)
     }
 
     // MARK: - Re-summarizing what's already saved

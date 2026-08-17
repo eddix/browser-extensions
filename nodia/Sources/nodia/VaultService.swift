@@ -28,9 +28,12 @@ final class VaultService {
             self.store = store
             Self.seedJumpsFileIfMissing(vaultRoot: settings.vaultURL)
 
-            let api = VaultAPI(store: store) { [weak self] title, url, content, done in
-                self?.preview(title: title, url: url, content: content, done: done)
-                    ?? done(VaultAPI.Preview(summary: nil, reason: "服务未就绪"))
+            let api = VaultAPI(store: store) {
+                [weak self] title, url, content, onProgress, done in
+                self?.preview(
+                    title: title, url: url, content: content,
+                    onProgress: onProgress, done: done
+                ) ?? done(VaultAPI.Preview(summary: nil, reason: "服务未就绪"))
             }
             let server = LocalHTTPServer(
                 port: UInt16(settings.port),
@@ -85,6 +88,7 @@ final class VaultService {
         title: String,
         url: String,
         content: String,
+        onProgress: @escaping @Sendable (Summarizer.Progress) -> Void,
         done: @escaping @Sendable (VaultAPI.Preview) -> Void
     ) {
         let summarizer = Summarizer(config: settings.summarizer)
@@ -99,7 +103,9 @@ final class VaultService {
         }
 
         Task.detached(priority: .userInitiated) {
-            switch await summarizer.summarize(title: title, url: url, content: content) {
+            switch await summarizer.summarize(
+                title: title, url: url, content: content, onProgress: onProgress
+            ) {
             case .summarized(let result):
                 done(VaultAPI.Preview(
                     summary: result.summary, keywords: result.keywords, reason: nil

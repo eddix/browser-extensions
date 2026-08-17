@@ -161,6 +161,83 @@ async function inPage(tabId, func, args = []) {
   return result?.result;
 }
 
+/** Keys one in-flight preview. Not a security boundary — the token is. */
+function newJobId() {
+  return `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const fmtNum = (n) => (n || 0).toLocaleString('zh-CN');
+
+/** What the model has produced so far, as a line you can watch move. */
+function progressLine(p, seconds) {
+  if (p.text_chars > 0) {
+    return `已写出摘要 ${fmtNum(p.text_chars)} 字 · 推理 ${fmtNum(p.thinking_chars)} 字 · ${seconds} 秒`;
+  }
+  if (p.thinking_chars > 0) {
+    return `模型推理中 ${fmtNum(p.thinking_chars)} 字 · ${seconds} 秒`;
+  }
+  return `等待模型响应 · ${seconds} 秒`;
+}
+
+/**
+ * Runs a preview while showing how much the model has written.
+ *
+ * Summarizing takes 9–40 seconds on a reasoning model, and nearly all of it
+ * passes before the first character of the actual summary exists. A spinner
+ * can't distinguish that from a dropped connection, so this polls the server's
+ * own byte counters — the one signal that proves data is still arriving — and
+ * says so explicitly once they stop moving.
+ */
+async function previewWithProgress(tab, kind, content) {
+  const job = newJobId();
+  const started = Date.now();
+  let lastTotal = -1;
+  let stalledSince = null;
+
+  const tick = async () => {
+    let p;
+    try {
+      p = await api(`/api/preview-progress?job=${encodeURIComponent(job)}`);
+    } catch (e) {
+      return; // a failed poll says nothing about the summary itself
+    }
+    if (p.done) return;
+
+    const seconds = Math.round((Date.now() - started) / 1000);
+    let detail = progressLine(p, seconds);
+
+    const total = (p.thinking_chars || 0) + (p.text_chars || 0);
+    if (total === lastTotal) {
+      stalledSince ??= Date.now();
+      const idle = Math.round((Date.now() - stalledSince) / 1000);
+      // Say it plainly rather than letting the user guess from a still spinner.
+      if (idle >= 15) detail += `（已 ${idle} 秒没有新数据）`;
+    } else {
+      stalledSince = null;
+      lastTotal = total;
+    }
+
+    try {
+      await inPage(tab.id, (t, d) => nodiaPanelBusy(t, d), ['正在生成摘要…', detail]);
+    } catch (e) {
+      // Tab closed or navigated away — the request keeps running, we just
+      // have nowhere to draw.
+    }
+  };
+
+  const timer = setInterval(tick, 1000);
+  try {
+    // The job id rides the query string because it has to be known before the
+    // request that would otherwise hand it back.
+    return await api(`/api/preview?job=${encodeURIComponent(job)}`, {
+      method: 'POST',
+      body: payloadFor(tab, kind, { content }),
+    });
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 /**
  * Ask for the kind first, then do only the work that kind needs.
  *
@@ -217,10 +294,7 @@ async function reviewAndSave() {
     const content = await grabContent(tab.id);
     await inPage(tab.id, (t) => nodiaPanelBusy(t), ['正在生成摘要…']);
 
-    const preview = await api('/api/preview', {
-      method: 'POST',
-      body: payloadFor(tab, kind, { content }),
-    });
+    const preview = await previewWithProgress(tab, kind, content);
 
     const approved = await inPage(tab.id, (p) => nodiaPanelConfirm(p), [{
       summary: preview.summary || '',
@@ -271,10 +345,7 @@ async function regenerateSummary(tab, existing) {
   const content = await grabContent(tab.id);
   await inPage(tab.id, (t) => nodiaPanelBusy(t), ['正在生成摘要…']);
 
-  const preview = await api('/api/preview', {
-    method: 'POST',
-    body: payloadFor(tab, existing.kind || 'readlater', { content }),
-  });
+  const preview = await previewWithProgress(tab, existing.kind || 'readlater', content);
 
   const approved = await inPage(tab.id, (p) => nodiaPanelConfirm(p), [{
     summary: preview.summary || '',

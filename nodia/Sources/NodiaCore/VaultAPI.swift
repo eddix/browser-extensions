@@ -22,17 +22,27 @@ public struct VaultAPI: Sendable {
     }
 
     private let store: VaultStore
+    /// Live counters for summaries still being written, so the panel can show
+    /// that something is happening during a wait measured in tens of seconds.
+    public let progress = PreviewProgressStore()
     /// Generates a summary without saving anything. Nil result means none was
-    /// produced; the accompanying reason explains why.
+    /// produced; the accompanying reason explains why. `onProgress` fires on
+    /// every delta while the model writes.
     private let summarize: @Sendable (
         _ title: String, _ url: String, _ content: String,
+        _ onProgress: @escaping @Sendable (Summarizer.Progress) -> Void,
         _ completion: @escaping @Sendable (Preview) -> Void
     ) -> Void
 
     public init(
         store: VaultStore,
-        summarize: @escaping @Sendable (String, String, String, @escaping @Sendable (Preview) -> Void) -> Void
-            = { _, _, _, done in done(Preview(summary: nil, keywords: [], reason: "摘要未启用")) }
+        summarize: @escaping @Sendable (
+            String, String, String,
+            @escaping @Sendable (Summarizer.Progress) -> Void,
+            @escaping @Sendable (Preview) -> Void
+        ) -> Void = { _, _, _, _, done in
+            done(Preview(summary: nil, keywords: [], reason: "摘要未启用"))
+        }
     ) {
         self.store = store
         self.summarize = summarize
@@ -73,15 +83,47 @@ public struct VaultAPI: Sendable {
                 return completion(.error(400, "invalid payload"))
             }
             let existsIn = store.checkDuplicate(link.url)
-            summarize(link.title, link.url, link.content ?? "") { preview in
-                completion(.ok(PreviewResponse(
-                    title: link.title,
-                    summary: preview.summary,
-                    keywords: preview.keywords,
-                    reason: preview.reason,
-                    exists_in: existsIn
+            // The caller invents the job id and polls it, because it has to be
+            // known before the request that would otherwise return it.
+            let job = request.query["job"].flatMap { $0.isEmpty ? nil : $0 }
+            if let job { progress.start(job) }
+            let progressStore = progress
+            summarize(
+                link.title, link.url, link.content ?? "",
+                { update in
+                    if let job { progressStore.update(job, update) }
+                },
+                { preview in
+                    if let job { progressStore.finish(job) }
+                    completion(.ok(PreviewResponse(
+                        title: link.title,
+                        summary: preview.summary,
+                        keywords: preview.keywords,
+                        reason: preview.reason,
+                        exists_in: existsIn
+                    )))
+                }
+            )
+
+        case ("GET", "/api/preview-progress"):
+            guard let job = request.query["job"], !job.isEmpty else {
+                return completion(.error(400, "missing job"))
+            }
+            guard let entry = progress.read(job) else {
+                // Either the preview hasn't started yet or it's long finished.
+                // Both are "nothing to show", not an error worth surfacing.
+                return completion(.ok(ProgressResponse(
+                    found: false, thinking_chars: 0, text_chars: 0,
+                    elapsed_ms: 0, done: false
                 )))
             }
+            completion(.ok(ProgressResponse(
+                found: true,
+                thinking_chars: entry.thinkingChars,
+                text_chars: entry.textChars,
+                elapsed_ms: Int(entry.elapsed * 1000),
+                done: entry.done
+            )))
 
         case ("POST", "/api/links"):
             guard !request.body.isEmpty else { return completion(.error(400, "empty body")) }
@@ -153,6 +195,14 @@ public struct VaultAPI: Sendable {
         let summary: String?
         let summary_at: String?
         let keywords: [String]
+    }
+
+    private struct ProgressResponse: Encodable {
+        let found: Bool
+        let thinking_chars: Int
+        let text_chars: Int
+        let elapsed_ms: Int
+        let done: Bool
     }
 
     private struct PreviewResponse: Encodable {

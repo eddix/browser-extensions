@@ -47,6 +47,10 @@ function nodiaPanelStyles() {
             border-radius: 8px; padding: 8px 10px;
             max-height: 132px; overflow-y: auto; white-space: pre-wrap; }
     .prev.empty { font-style: italic; }
+    /* Live byte counts while the model works. Tabular figures so the digits
+       don't jitter as they tick up. */
+    .meter { font-size: 11px; color: #656d76; margin-top: 6px;
+             font-variant-numeric: tabular-nums; }
     .label { font-size: 11px; color: #656d76; margin: 10px 0 4px; }
     .label:first-child { margin-top: 0; }
     .meta { font-size: 12px; color: #656d76; margin-bottom: 8px; }
@@ -94,7 +98,7 @@ function nodiaPanelStyles() {
       .group button { color: #e6edf3; background: #1c1f24; border-color: #383e46; }
       .group button:hover { background: #2a2f36; }
       .ghost { color: #e6edf3; background: #22262c; border-color: #383e46; }
-      .hint, .status, .label, .meta { color: #8b949e; }
+      .hint, .status, .label, .meta, .meter { color: #8b949e; }
       .meta b { color: #e6edf3; }
       .prev { color: #a5aeb8; border-color: #383e46; }
     }
@@ -282,8 +286,14 @@ function nodiaPanelExisting({ title, existsIn, kindLabel, summary, keywords, sum
   });
 }
 
-/** Between stages: the archive path is about to read the page and call a model. */
-function nodiaPanelBusy(text) {
+/**
+ * Between stages: the archive path is about to read the page and call a model.
+ *
+ * `detail` is the live byte count from the model. A spinner alone can't tell a
+ * model that is thinking from a connection that died — and this wait runs tens
+ * of seconds — so the numbers, not the animation, are what says it's alive.
+ */
+function nodiaPanelBusy(text, detail) {
   const panel = window.__nodiaPanel;
   if (!panel) return;
   const body = panel.root.querySelector(".body");
@@ -297,6 +307,18 @@ function nodiaPanelBusy(text) {
     body.appendChild(status);
   }
   status.querySelector(".msg").textContent = text;
+
+  let meter = body.querySelector(".meter");
+  if (detail) {
+    if (!meter) {
+      meter = document.createElement("div");
+      meter.className = "meter";
+      body.appendChild(meter);
+    }
+    meter.textContent = detail;
+  } else if (meter) {
+    meter.remove();
+  }
   panel.root.querySelector(".actions").style.display = "none";
 }
 
