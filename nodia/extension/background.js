@@ -39,11 +39,13 @@ async function api(path, { method = 'GET', body } = {}) {
 
 // ---------- 图标状态 ----------
 
+/** Also carries back what the saved entry says, so the panel can show you the
+ *  stored summary without a second round trip. */
 async function checkUrlExists(url) {
   if (!url || !url.startsWith('http')) return { exists: false, error: false };
   try {
     const data = await api(`/api/check-url?url=${encodeURIComponent(url)}`);
-    return { exists: data.exists, error: false };
+    return { ...data, error: false };
   } catch (e) {
     return { exists: false, error: true };
   }
@@ -177,11 +179,14 @@ async function reviewAndSave() {
     }
 
     // Cheap and local — knowing it's a duplicate is worth having up front.
-    const dup = await checkUrlExists(tab.url);
+    const existing = await checkUrlExists(tab.url);
+
+    // Already saved: saving it again is a no-op, so offer the thing that isn't.
+    if (existing.exists) return regenerateSummary(tab, existing);
 
     const kind = await inPage(tab.id, (p) => nodiaPanelChooseKind(p), [{
       title: tab.title || '',
-      existsIn: dup.exists ? '收藏库' : '',
+      existsIn: '',
       defaultKind,
     }]);
     if (!kind) return;                       // cancelled — nothing read, nothing sent
@@ -208,6 +213,8 @@ async function reviewAndSave() {
       summary: preview.summary || '',
       keywords: preview.keywords || [],
       reason: preview.reason || '',
+      // Filing the link is worth doing even when the summary failed.
+      allowEmpty: true,
     }]);
     if (!approved) return;
 
@@ -224,6 +231,57 @@ async function reviewAndSave() {
     showError(error.message || '保存失败');
     setIcon('error');
   }
+}
+
+/**
+ * The link is already in the vault, so there is nothing to save — the useful
+ * action is describing it again.
+ *
+ * A summary describes the page as it was the day it was saved. Most of the
+ * archive predates summaries entirely, and documents get rewritten under a
+ * stable URL, so the stored text and the live page drift apart silently. This
+ * shows both and only replaces the old one once you've seen the new one.
+ */
+async function regenerateSummary(tab, existing) {
+  const choice = await inPage(tab.id, (p) => nodiaPanelExisting(p), [{
+    title: existing.title || tab.title || '',
+    existsIn: existing.exists_in || '',
+    kindLabel: KIND_LABEL[existing.kind] || '收藏',
+    summary: existing.summary || '',
+    keywords: existing.keywords || [],
+    // ISO timestamp — the date is the part that answers "is this stale?".
+    summaryAt: (existing.summary_at || '').slice(0, 10),
+  }]);
+  if (choice !== 'regenerate') return;
+
+  await inPage(tab.id, (t) => nodiaPanelBusy(t), ['正在抓取正文…']);
+  const content = await grabContent(tab.id);
+  await inPage(tab.id, (t) => nodiaPanelBusy(t), ['正在生成摘要…']);
+
+  const preview = await api('/api/preview', {
+    method: 'POST',
+    body: payloadFor(tab, existing.kind || 'readlater', { content }),
+  });
+
+  const approved = await inPage(tab.id, (p) => nodiaPanelConfirm(p), [{
+    summary: preview.summary || '',
+    keywords: preview.keywords || [],
+    reason: preview.reason || '',
+    previous: existing.summary || '',
+    saveLabel: existing.summary ? '更新摘要' : '写入摘要',
+  }]);
+  if (!approved || !approved.summary) return;
+
+  const result = await api('/api/update-summary', {
+    method: 'POST',
+    body: {
+      url: tab.url,
+      summary: approved.summary,
+      keywords: approved.keywords || [],
+    },
+  });
+  showSuccess(`已更新摘要\n  • ${result.file || '收藏库'}`);
+  setIcon('saved');
 }
 
 /// Right-click path: the kind is already explicit, so there's nothing to

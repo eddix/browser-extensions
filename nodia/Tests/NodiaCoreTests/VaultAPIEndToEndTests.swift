@@ -87,6 +87,66 @@ final class VaultAPIEndToEndTests: XCTestCase {
         return (try? String(contentsOf: file, encoding: .utf8)) ?? ""
     }
 
+    // MARK: - Re-summarizing what's already saved
+
+    /// The round trip the panel makes: save, come back later, read what it
+    /// says, replace it. `check-url` carrying the stored summary is what lets
+    /// the panel show the old text without a second request.
+    func testSavedSummaryComesBackFromCheckURLAndCanBeReplaced() throws {
+        let payload = Data("""
+        {"title":"汇丰开户","url":"https://example.com/hsbc","kind":"readlater",
+         "summary":"当时的摘要","keywords":["汇丰"],"source":"arc"}
+        """.utf8)
+        XCTAssertEqual(try send("/api/links", method: "POST", body: payload).status, 200)
+
+        let check = try send("/api/check-url?url=https://example.com/hsbc")
+        XCTAssertEqual(check.status, 200)
+        XCTAssertTrue(check.body.contains("\"exists\":true"), check.body)
+        XCTAssertTrue(check.body.contains("当时的摘要"), check.body)
+        XCTAssertTrue(check.body.contains("readlater"), check.body)
+
+        let patch = Data("""
+        {"url":"https://example.com/hsbc","summary":"重新生成的摘要","keywords":["汇丰","开户"]}
+        """.utf8)
+        let updated = try send("/api/update-summary", method: "POST", body: patch)
+        XCTAssertEqual(updated.status, 200, updated.body)
+
+        let text = todayInboxText()
+        XCTAssertTrue(text.contains("- summary: 重新生成的摘要"), text)
+        XCTAssertFalse(text.contains("当时的摘要"), "旧摘要应被替换")
+        XCTAssertTrue(text.contains("- keywords: 汇丰, 开户"), text)
+
+        // Updating must not call a model — the text was approved in the panel.
+        XCTAssertTrue(captured.all.isEmpty, "更新摘要不该再调一次模型")
+
+        let after = try send("/api/check-url?url=https://example.com/hsbc")
+        XCTAssertTrue(after.body.contains("重新生成的摘要"), after.body)
+        XCTAssertTrue(after.body.contains("summary_at"), after.body)
+    }
+
+    /// An empty summary would erase a good one, so it's refused at the door
+    /// rather than written and regretted.
+    func testUpdateRefusesAnEmptySummary() throws {
+        let payload = Data("""
+        {"title":"甲","url":"https://example.com/a","kind":"readlater","summary":"有用的摘要"}
+        """.utf8)
+        XCTAssertEqual(try send("/api/links", method: "POST", body: payload).status, 200)
+
+        // Empty, whitespace-only, and absent — all three must be refused.
+        for body in [#"{"url":"https://example.com/a","summary":""}"#,
+                     #"{"url":"https://example.com/a","summary":"   "}"#,
+                     #"{"url":"https://example.com/a"}"#] {
+            let r = try send("/api/update-summary", method: "POST", body: Data(body.utf8))
+            XCTAssertEqual(r.status, 400, body)
+        }
+        XCTAssertTrue(todayInboxText().contains("- summary: 有用的摘要"), "原摘要必须还在")
+    }
+
+    func testUpdatingAURLThatWasNeverSavedIs404() throws {
+        let patch = Data(#"{"url":"https://example.com/nope","summary":"x"}"#.utf8)
+        XCTAssertEqual(try send("/api/update-summary", method: "POST", body: patch).status, 404)
+    }
+
     // MARK: - The real flow
 
     func testSavingAPageWritesItToDiskAndThenReportsItAsDuplicate() throws {

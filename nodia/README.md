@@ -68,8 +68,27 @@ the vault as Markdown.
 - TODOs are written as `- [ ]` checkboxes into `Bookmark/00-Todo.md`, so
   Obsidian Tasks and your daily note can pick them up; a tab bar can't
   represent "done".
-- The icon turns green on pages already in the vault, and the panel says so
-  before you save a duplicate.
+- The icon turns green on pages already in the vault. Clicking it there doesn't
+  offer to save again — saving a duplicate does nothing — it shows what the
+  entry currently says and offers to describe it again.
+
+### Re-summarizing
+
+A summary describes a page as it was the day it was saved. Two things make that
+stop being true: most of the archive predates summarizing entirely, and
+documents get rewritten under a stable URL. Either way the vault keeps
+answering searches with a description that no longer matches the page.
+
+So the summary is replaceable in place. The panel shows the stored text, then
+the newly generated one next to it, and only writes after you've compared them.
+`saved-at` is left alone — the link is as old as it always was — and a separate
+`summary-at` records when the description was last refreshed, which is what
+makes staleness answerable at all.
+
+Only the target entry's own `summary`/`keywords` lines are rewritten. Every
+other byte of the file — other entries, frontmatter, notes you added by hand —
+is carried through untouched, and a regeneration that comes back empty offers
+no way to overwrite a good summary with nothing.
 
 Asking for the kind *before* doing the work is what keeps the common case
 fast: the kind decides whether a model is called at all.

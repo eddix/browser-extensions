@@ -19,10 +19,15 @@ public final class VaultStore: @unchecked Sendable {
         public let summary: String?
         public let keywords: [String]
         public let relativePath: String
+        /// When the summary was last written, if it was ever rewritten. Absent
+        /// on entries whose summary dates from the day they were saved — for
+        /// those `saved-at` already answers it.
+        public let summaryAt: String?
 
         public init(
             title: String, url: String, kind: LinkKind,
-            summary: String?, keywords: [String] = [], relativePath: String
+            summary: String?, keywords: [String] = [], relativePath: String,
+            summaryAt: String? = nil
         ) {
             self.title = title
             self.url = url
@@ -30,6 +35,7 @@ public final class VaultStore: @unchecked Sendable {
             self.summary = summary
             self.keywords = keywords
             self.relativePath = relativePath
+            self.summaryAt = summaryAt
         }
     }
 
@@ -50,6 +56,13 @@ public final class VaultStore: @unchecked Sendable {
         public let errors: [SaveError]
     }
 
+    public struct UpdateResult: Codable, Sendable {
+        public let success: Bool
+        /// Where the rewritten entry lives, so the panel can name it.
+        public let file: String?
+        public let error: String?
+    }
+
     public enum VaultError: LocalizedError {
         case notADirectory(String)
 
@@ -62,7 +75,10 @@ public final class VaultStore: @unchecked Sendable {
 
     public let vaultRoot: URL
     private let queue = DispatchQueue(label: "com.eddix.nodia.vault")
-    private var urlIndex: [String: String] = [:]   // normalized url -> relative path
+    /// Normalized url -> the entry already on disk. Doubles as the duplicate
+    /// check and as the lookup that lets the extension show you the summary a
+    /// link was saved with before offering to replace it.
+    private var entryByURL: [String: Entry] = [:]
     private var entries: [Entry] = []
 
     public init(vaultRoot: URL) throws {
@@ -126,7 +142,7 @@ public final class VaultStore: @unchecked Sendable {
     }
 
     private func rebuildIndexLocked() {
-        urlIndex.removeAll()
+        entryByURL.removeAll()
         entries.removeAll()
         guard let walker = FileManager.default.enumerator(
             at: bookmarkDir,
@@ -143,7 +159,7 @@ public final class VaultStore: @unchecked Sendable {
             fileCount += 1
             ingest(text: text, relativePath: relativePath(url))
         }
-        Log.write("vault index: \(fileCount) files, \(urlIndex.count) links")
+        Log.write("vault index: \(fileCount) files, \(entryByURL.count) links")
     }
 
     /// Parses the bullet format written by `append`. A title line is a
@@ -153,24 +169,32 @@ public final class VaultStore: @unchecked Sendable {
         var title: String?
         var kind: LinkKind = .readlater
         var summary: String?
+        var summaryAt: String?
         var keywords: [String] = []
         var url: String?
 
         // An entry is only complete at its boundary: `summary:` comes *after*
         // `url:`, so emitting on the url line would drop every summary.
         func flush() {
-            defer { title = nil; summary = nil; keywords = []; url = nil; kind = .readlater }
+            defer {
+                title = nil; summary = nil; summaryAt = nil
+                keywords = []; url = nil; kind = .readlater
+            }
             guard let url else { return }
-            let key = Self.normalize(url)
-            if urlIndex[key] == nil { urlIndex[key] = relativePath }
-            entries.append(Entry(
+            let entry = Entry(
                 title: title ?? url,
                 url: url,
                 kind: kind,
                 summary: summary,
                 keywords: keywords,
-                relativePath: relativePath
-            ))
+                relativePath: relativePath,
+                summaryAt: summaryAt
+            )
+            // First occurrence wins, so the duplicate report names the file the
+            // link was originally filed into.
+            let key = Self.normalize(url)
+            if entryByURL[key] == nil { entryByURL[key] = entry }
+            entries.append(entry)
         }
 
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -198,6 +222,9 @@ public final class VaultStore: @unchecked Sendable {
 
             if field.hasPrefix("tag:") {
                 for k in LinkKind.allCases where field.contains(k.tag) { kind = k }
+            } else if field.hasPrefix("summary-at:") {
+                let s = TextClean.strip(String(field.dropFirst("summary-at:".count)))
+                summaryAt = s.isEmpty ? nil : s
             } else if field.hasPrefix("summary:") {
                 let s = TextClean.strip(String(field.dropFirst("summary:".count)))
                 summary = s.isEmpty ? nil : s
@@ -216,7 +243,13 @@ public final class VaultStore: @unchecked Sendable {
     }
 
     public func checkDuplicate(_ url: String) -> String? {
-        queue.sync { urlIndex[Self.normalize(url)] }
+        queue.sync { entryByURL[Self.normalize(url)]?.relativePath }
+    }
+
+    /// The entry already saved for `url`, if any — including the summary it
+    /// was saved with, so it can be shown before anything replaces it.
+    public func entry(for url: String) -> Entry? {
+        queue.sync { entryByURL[Self.normalize(url)] }
     }
 
     /// Snapshot for the search index.
@@ -234,23 +267,23 @@ public final class VaultStore: @unchecked Sendable {
 
             for link in links {
                 let key = Self.normalize(link.url)
-                if let existing = urlIndex[key] {
-                    duplicates.append(Duplicate(url: link.url, exists_in: existing))
+                if let existing = entryByURL[key] {
+                    duplicates.append(Duplicate(url: link.url, exists_in: existing.relativePath))
                     continue
                 }
                 let file = targetFile(for: link.kind)
                 do {
                     try append(link, to: file)
-                    let relative = relativePath(file)
-                    urlIndex[key] = relative
-                    entries.append(Entry(
+                    let entry = Entry(
                         title: link.title,
                         url: link.url,
                         kind: link.kind,
                         summary: link.summary,
                         keywords: link.keywords,
-                        relativePath: relative
-                    ))
+                        relativePath: relativePath(file)
+                    )
+                    entryByURL[key] = entry
+                    entries.append(entry)
                     saved += 1
                 } catch {
                     errors.append(SaveError(url: link.url, error: error.localizedDescription))
@@ -259,6 +292,130 @@ public final class VaultStore: @unchecked Sendable {
             return SaveResult(success: errors.isEmpty, saved: saved,
                               duplicates: duplicates, errors: errors)
         }
+    }
+
+    /// Replaces the summary and keywords of an entry already on disk.
+    ///
+    /// A summary describes a page as it was on the day it was saved. Pages
+    /// change, and most of the archive predates summaries entirely — so the
+    /// summary has to be replaceable without re-saving the link and losing the
+    /// original `saved-at`.
+    ///
+    /// Only the target entry's own field lines are touched. Everything else in
+    /// the file — other entries, frontmatter, hand-written notes, blank lines —
+    /// is carried through unchanged, because this is editing a file the user
+    /// owns and may well have edited themselves.
+    public func updateSummary(url: String, summary: String, keywords: [String]) -> UpdateResult {
+        queue.sync {
+            let key = Self.normalize(url)
+            guard let existing = entryByURL[key] else {
+                return UpdateResult(success: false, file: nil, error: "这个链接不在收藏库里")
+            }
+            let file = vaultRoot.appendingPathComponent(existing.relativePath)
+            let stamp = ISO8601DateFormatter.vesperWriter.string(from: Date())
+            do {
+                let text = try String(contentsOf: file, encoding: .utf8)
+                guard let rewritten = Self.rewritingSummary(
+                    in: text, url: key, summary: summary, keywords: keywords, at: stamp
+                ) else {
+                    // The index says it's here but the file no longer agrees —
+                    // stop rather than guess which entry was meant.
+                    return UpdateResult(success: false, file: existing.relativePath,
+                                        error: "在 \(existing.relativePath) 里找不到这条记录")
+                }
+                try rewritten.write(to: file, atomically: true, encoding: .utf8)
+
+                let updated = Entry(
+                    title: existing.title, url: existing.url, kind: existing.kind,
+                    summary: summary.isEmpty ? nil : TextClean.singleLine(summary),
+                    keywords: keywords, relativePath: existing.relativePath,
+                    summaryAt: stamp
+                )
+                entryByURL[key] = updated
+                if let i = entries.firstIndex(where: { Self.normalize($0.url) == key }) {
+                    entries[i] = updated
+                }
+                Log.write("vault: updated summary in \(existing.relativePath)")
+                return UpdateResult(success: true, file: existing.relativePath, error: nil)
+            } catch {
+                return UpdateResult(success: false, file: existing.relativePath,
+                                    error: error.localizedDescription)
+            }
+        }
+    }
+
+    /// Rewrites one entry's `keywords`/`summary` lines in `text`, or nil if no
+    /// entry with that URL is in this file.
+    ///
+    /// Works on the block between the entry's own title bullet and the next
+    /// one. Within it the stale field lines are dropped and fresh ones appended
+    /// after the last surviving field, which keeps the fields together even
+    /// when the block ends in blank lines.
+    static func rewritingSummary(
+        in text: String, url key: String, summary: String, keywords: [String], at stamp: String
+    ) -> String? {
+        var lines = text.components(separatedBy: "\n")
+
+        func isTitleBullet(_ line: String) -> Bool {
+            let clean = TextClean.removeInvisible(line)
+            return !clean.hasPrefix(" ") && !clean.hasPrefix("\t")
+                && clean.trimmingCharacters(in: .whitespaces).hasPrefix("- ")
+        }
+        /// The `key:` of an indented `  - key: value` line, else nil.
+        func fieldName(_ line: String) -> String? {
+            let clean = TextClean.removeInvisible(line)
+            guard clean.hasPrefix(" ") || clean.hasPrefix("\t") else { return nil }
+            let trimmed = clean.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("- "), let colon = trimmed.firstIndex(of: ":") else { return nil }
+            return String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<colon])
+        }
+
+        // Locate the block: scan for the url line, remembering the title bullet
+        // above it.
+        var blockStart: Int?
+        var current: Int?
+        for (i, line) in lines.enumerated() {
+            if isTitleBullet(line) { current = i; continue }
+            guard fieldName(line) == "url", let start = current else { continue }
+            let clean = TextClean.removeInvisible(line).trimmingCharacters(in: .whitespaces)
+            guard let colon = clean.firstIndex(of: ":") else { continue }
+            let value = String(clean[clean.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            if Self.normalize(value) == key { blockStart = start; break }
+        }
+        guard let start = blockStart else { return nil }
+
+        var end = lines.count
+        for i in (start + 1)..<lines.count where isTitleBullet(lines[i]) {
+            end = i
+            break
+        }
+
+        // Match the indentation already in use rather than assuming two spaces.
+        var indent = "  "
+        var kept: [String] = []
+        var lastField = -1
+        for i in start..<end {
+            guard let name = fieldName(lines[i]) else { kept.append(lines[i]); continue }
+            if name == "url" {
+                indent = String(lines[i].prefix(while: { $0 == " " || $0 == "\t" }))
+            }
+            if ["summary", "keywords", "summary-at"].contains(name) { continue }
+            kept.append(lines[i])
+            lastField = kept.count - 1
+        }
+
+        var fresh: [String] = []
+        if !keywords.isEmpty {
+            fresh.append("\(indent)- keywords: \(keywords.map(TextClean.singleLine).joined(separator: ", "))")
+        }
+        fresh.append("\(indent)- summary: \(TextClean.singleLine(summary))")
+        // Dating the summary separately from `saved-at` is what makes staleness
+        // answerable: the link is old, but the description of it may not be.
+        fresh.append("\(indent)- summary-at: \(stamp)")
+        kept.insert(contentsOf: fresh, at: lastField >= 0 ? lastField + 1 : min(1, kept.count))
+
+        lines.replaceSubrange(start..<end, with: kept)
+        return lines.joined(separator: "\n")
     }
 
     private func append(_ link: VaultLink, to file: URL) throws {
@@ -316,9 +473,11 @@ public final class VaultStore: @unchecked Sendable {
         out += "  - tag: #from-browser \(link.kind.tag)\n"
         if !link.keywords.isEmpty {
             // Before summary: short, scannable, and the thing you skim for.
-            out += "  - keywords: \(link.keywords.joined(separator: ", "))\n"
+            out += "  - keywords: \(link.keywords.map(TextClean.singleLine).joined(separator: ", "))\n"
         }
-        out += "  - summary: \(link.summary ?? "")\n"
+        // Flattened: one field per line, and a hand-edited summary can contain
+        // newlines (see TextClean.singleLine).
+        out += "  - summary: \(TextClean.singleLine(link.summary ?? ""))\n"
         out += "\n"
         return out
     }

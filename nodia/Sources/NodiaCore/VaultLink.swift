@@ -121,6 +121,20 @@ public enum TextClean {
     public static func strip(_ s: String) -> String {
         removeInvisible(s).trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// Flattens to a single line, for values written as `  - key: value`.
+    ///
+    /// Each field occupies exactly one line, so an embedded newline splits the
+    /// value in half: the parser sees the remainder as a stray unindented line
+    /// and drops it, silently truncating what got saved. Summaries are the
+    /// exposed case — they're long, and editable by hand before saving.
+    public static func singleLine(_ s: String) -> String {
+        strip(s)
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
 }
 
 extension ISO8601DateFormatter {

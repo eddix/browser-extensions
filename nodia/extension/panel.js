@@ -17,8 +17,10 @@ function nodiaPanelStyles() {
   return `
     :host { all: initial; }
     * { box-sizing: border-box; }
+    /* Sized for what a summary actually is: 100–150 Chinese characters, which
+       needs roughly seven lines to read without scrolling. */
     .card {
-      width: 380px;
+      width: 460px;
       font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: #1f2328; background: #ffffff;
       border: 1px solid #d0d7de; border-radius: 12px;
@@ -35,9 +37,20 @@ function nodiaPanelStyles() {
             border-right-color: transparent; border-radius: 50%;
             animation: sp .7s linear infinite; }
     @keyframes sp { to { transform: rotate(360deg); } }
-    textarea { width: 100%; min-height: 76px; resize: vertical; font: inherit;
-               padding: 8px 10px; color: #1f2328; background: #f6f8fa;
+    textarea { width: 100%; min-height: 150px; max-height: 45vh; resize: vertical;
+               font: inherit; padding: 8px 10px; color: #1f2328; background: #f6f8fa;
                border: 1px solid #d0d7de; border-radius: 8px; }
+    /* The summary already on disk: readable, scrollable, clearly not the field
+       you're editing. */
+    .prev { font-size: 12px; line-height: 1.6; color: #656d76;
+            background: rgba(127,127,127,.07); border: 1px solid #d0d7de;
+            border-radius: 8px; padding: 8px 10px;
+            max-height: 132px; overflow-y: auto; white-space: pre-wrap; }
+    .prev.empty { font-style: italic; }
+    .label { font-size: 11px; color: #656d76; margin: 10px 0 4px; }
+    .label:first-child { margin-top: 0; }
+    .meta { font-size: 12px; color: #656d76; margin-bottom: 8px; }
+    .meta b { font-weight: 600; color: #1f2328; }
     .kw { width: 100%; margin-top: 6px; font: inherit; font-size: 12px;
           padding: 6px 10px; color: #1f2328; background: #f6f8fa;
           border: 1px solid #d0d7de; border-radius: 8px; }
@@ -81,7 +94,9 @@ function nodiaPanelStyles() {
       .group button { color: #e6edf3; background: #1c1f24; border-color: #383e46; }
       .group button:hover { background: #2a2f36; }
       .ghost { color: #e6edf3; background: #22262c; border-color: #383e46; }
-      .hint, .status { color: #8b949e; }
+      .hint, .status, .label, .meta { color: #8b949e; }
+      .meta b { color: #e6edf3; }
+      .prev { color: #a5aeb8; border-color: #383e46; }
     }
   `;
 }
@@ -109,11 +124,10 @@ function nodiaPanelSvg(path) {
     stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
 }
 
-/**
- * Stage 1 — show the page and ask which kind. Resolves with the kind, or null
- * if cancelled. Nothing has been read from the page or sent anywhere yet.
- */
-function nodiaPanelChooseKind({ title, existsIn, defaultKind }) {
+/** Builds the shadow-root card and registers it as the live panel.
+ *  Page-supplied text is never interpolated into this markup — callers set it
+ *  with textContent, because a page title is written by the page. */
+function nodiaPanelMount(bodyHTML) {
   const HOST_ID = "nodia-review-host";
   document.getElementById(HOST_ID)?.remove();
 
@@ -127,17 +141,38 @@ function nodiaPanelChooseKind({ title, existsIn, defaultKind }) {
   root.innerHTML = `
     <style>${nodiaPanelStyles()}</style>
     <div class="card">
-      <div class="body">
-        <div class="title"></div>
-        ${existsIn ? `<div class="dup">已存在于 ${existsIn}</div>` : ""}
-        <div class="hint"><kbd>1/2/3</kbd> 选类型 · <kbd>⏎</kbd> 上次用的 · <kbd>esc</kbd> 取消</div>
-      </div>
-      <div class="actions"><div class="group"></div></div>
+      <div class="body">${bodyHTML}</div>
+      <div class="actions"></div>
     </div>
   `;
-  root.querySelector(".title").textContent = title || "(无标题)";
   document.documentElement.appendChild(host);
   window.__nodiaPanel = { host, root };
+  return { host, root };
+}
+
+/** A button appended to the action bar. */
+function nodiaPanelButton(root, { className, label, onClick }) {
+  const b = document.createElement("button");
+  b.className = className;
+  b.textContent = label;
+  b.addEventListener("click", onClick);
+  root.querySelector(".actions").appendChild(b);
+  return b;
+}
+
+/**
+ * Stage 1 — show the page and ask which kind. Resolves with the kind, or null
+ * if cancelled. Nothing has been read from the page or sent anywhere yet.
+ */
+function nodiaPanelChooseKind({ title, existsIn, defaultKind }) {
+  const { host, root } = nodiaPanelMount(`
+    <div class="title"></div>
+    ${existsIn ? `<div class="dup"></div>` : ""}
+    <div class="hint"><kbd>1/2/3</kbd> 选类型 · <kbd>⏎</kbd> 上次用的 · <kbd>esc</kbd> 取消</div>
+  `);
+  root.querySelector(".title").textContent = title || "(无标题)";
+  if (existsIn) root.querySelector(".dup").textContent = `已存在于 ${existsIn}`;
+  root.querySelector(".actions").innerHTML = `<div class="group"></div>`;
 
   return new Promise((resolve) => {
     let done = false;
@@ -162,17 +197,86 @@ function nodiaPanelChooseKind({ title, existsIn, defaultKind }) {
       group.appendChild(b);
     }
 
-    const cancel = document.createElement("button");
-    cancel.className = "ghost";
-    cancel.textContent = "取消";
-    cancel.addEventListener("click", () => finish(null));
-    root.querySelector(".actions").appendChild(cancel);
+    nodiaPanelButton(root, { className: "ghost", label: "取消", onClick: () => finish(null) });
 
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); return finish(null); }
       if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); return finish(defaultKind); }
       const hit = nodiaPanelKinds().find(([, , key]) => key === e.key);
       if (hit) { e.preventDefault(); e.stopPropagation(); finish(hit[0]); }
+    };
+    document.addEventListener("keydown", onKey, true);
+  });
+}
+
+/**
+ * Stage 1, alternate — the link is already in the vault. Shows what it says
+ * today and offers to describe it again. Resolves "regenerate" or null.
+ *
+ * Two things make a stored summary go stale: it was saved before summarizing
+ * existed at all, or the page has been rewritten since. Both are invisible
+ * until you can see the old text next to the page it claims to describe.
+ */
+function nodiaPanelExisting({ title, existsIn, kindLabel, summary, keywords, summaryAt }) {
+  const { host, root } = nodiaPanelMount(`
+    <div class="title"></div>
+    <div class="meta"></div>
+    <div class="label"></div>
+    <div class="prev"></div>
+    <div class="hint"><kbd>⏎</kbd> 重新生成 · <kbd>esc</kbd> 关闭</div>
+  `);
+  root.querySelector(".title").textContent = title || "(无标题)";
+
+  const meta = root.querySelector(".meta");
+  meta.innerHTML = `已存在 · <b></b> · <span class="file"></span>`;
+  meta.querySelector("b").textContent = kindLabel || "收藏";
+  meta.querySelector(".file").textContent = existsIn || "收藏库";
+
+  root.querySelector(".label").textContent = summaryAt
+    ? `当前摘要（${summaryAt}）`
+    : "当前摘要";
+
+  const prev = root.querySelector(".prev");
+  if (summary) {
+    prev.textContent = summary;
+  } else {
+    prev.classList.add("empty");
+    prev.textContent = "这条还没有摘要 — 存的时候还没有这个功能，或者当时跳过了。";
+  }
+
+  if (keywords && keywords.length) {
+    const kwLabel = document.createElement("div");
+    kwLabel.className = "label";
+    kwLabel.textContent = "检索词";
+    const kwBox = document.createElement("div");
+    kwBox.className = "prev";
+    kwBox.textContent = keywords.join("、");
+    prev.after(kwLabel, kwBox);
+  }
+
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("keydown", onKey, true);
+      if (result === null) {
+        host.remove();
+        delete window.__nodiaPanel;
+      }
+      resolve(result);
+    };
+
+    nodiaPanelButton(root, {
+      className: "save",
+      label: summary ? "重新生成摘要" : "生成摘要",
+      onClick: () => finish("regenerate"),
+    });
+    nodiaPanelButton(root, { className: "ghost", label: "关闭", onClick: () => finish(null) });
+
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); return finish(null); }
+      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); return finish("regenerate"); }
     };
     document.addEventListener("keydown", onKey, true);
   });
@@ -199,15 +303,36 @@ function nodiaPanelBusy(text) {
 /**
  * Stage 2 — show what was captured and wait for approval.
  * Resolves {summary, keywords} or null.
+ *
+ * `previous` puts the stored summary above the new one, which is the whole
+ * decision when replacing: whether this actually describes the page better.
  */
-function nodiaPanelConfirm({ summary, keywords, reason }) {
+function nodiaPanelConfirm({ summary, keywords, reason, previous, saveLabel, allowEmpty }) {
   const panel = window.__nodiaPanel;
   if (!panel) return null;
   const root = panel.root;
   const body = root.querySelector(".body");
-  body.querySelector(".status")?.remove();
+  // Rebuild everything under the heading: on the regenerate path this panel
+  // is already showing the old summary, and it belongs under its own label now.
+  for (const el of [...body.children]) {
+    if (!el.classList.contains("title") && !el.classList.contains("meta")) el.remove();
+  }
+
+  const add = (className, text) => {
+    const el = document.createElement("div");
+    el.className = className;
+    el.textContent = text;
+    body.appendChild(el);
+    return el;
+  };
+
+  if (previous) {
+    add("label", "原摘要");
+    add("prev", previous);
+  }
 
   if (summary) {
+    if (previous) add("label", "新摘要");
     const ta = document.createElement("textarea");
     ta.value = summary;
     ta.spellcheck = false;
@@ -223,17 +348,21 @@ function nodiaPanelConfirm({ summary, keywords, reason }) {
     kw.spellcheck = false;
     body.appendChild(kw);
   } else {
-    const warn = document.createElement("div");
-    warn.className = "warn";
     // Say why there's no summary — a broken endpoint should be visible here,
     // not discovered later as empty fields in the vault.
-    warn.textContent = `没有摘要：${reason || "未知原因"}`;
-    body.appendChild(warn);
+    add("warn", `没有摘要：${reason || "未知原因"}`);
   }
+
+  // Saving a link with no summary is legitimate — the link still gets filed.
+  // Replacing a stored summary with nothing is not, so the regenerate path
+  // leaves only one move when the model came back empty: keep what's there.
+  const canSave = !!summary || !!allowEmpty;
 
   const hint = document.createElement("div");
   hint.className = "hint";
-  hint.innerHTML = "<kbd>⏎</kbd> 保存 · <kbd>esc</kbd> 取消";
+  hint.innerHTML = canSave
+    ? "<kbd>⏎</kbd> 保存 · <kbd>esc</kbd> 取消"
+    : "<kbd>esc</kbd> 关闭，保留原有内容";
   body.appendChild(hint);
 
   const actions = root.querySelector(".actions");
@@ -256,24 +385,25 @@ function nodiaPanelConfirm({ summary, keywords, reason }) {
         .split(/[,，]/).map((s) => s.trim()).filter(Boolean),
     });
 
-    const save = document.createElement("button");
-    save.className = "save";
-    save.textContent = "存入档案";
-    save.addEventListener("click", () => finish(collect()));
-    actions.appendChild(save);
-
-    const cancel = document.createElement("button");
-    cancel.className = "ghost";
-    cancel.textContent = "取消";
-    cancel.addEventListener("click", () => finish(null));
-    actions.appendChild(cancel);
+    if (canSave) {
+      nodiaPanelButton(root, {
+        className: "save",
+        label: saveLabel || "存入档案",
+        onClick: () => finish(collect()),
+      });
+    }
+    nodiaPanelButton(root, {
+      className: "ghost",
+      label: canSave ? "取消" : "关闭",
+      onClick: () => finish(null),
+    });
 
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); return finish(null); }
       // Enter saves, but not while you're editing the summary — a newline
       // there should stay a newline.
       const tag = root.activeElement?.tagName;
-      if (e.key === "Enter" && tag !== "TEXTAREA") {
+      if (e.key === "Enter" && canSave && tag !== "TEXTAREA") {
         e.preventDefault(); e.stopPropagation(); finish(collect());
       }
     };

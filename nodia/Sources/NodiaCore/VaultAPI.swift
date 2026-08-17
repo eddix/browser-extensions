@@ -50,8 +50,19 @@ public struct VaultAPI: Sendable {
             guard let url = request.query["url"], !url.isEmpty else {
                 return completion(.error(400, "missing url"))
             }
-            let existsIn = store.checkDuplicate(url)
-            completion(.ok(CheckURL(exists: existsIn != nil, exists_in: existsIn)))
+            // Carries the saved summary back with the answer: this is polled on
+            // every tab switch anyway, and it's what lets the panel show you
+            // what a link already says before offering to replace it.
+            let existing = store.entry(for: url)
+            completion(.ok(CheckURL(
+                exists: existing != nil,
+                exists_in: existing?.relativePath,
+                kind: existing?.kind,
+                title: existing?.title,
+                summary: existing?.summary,
+                summary_at: existing?.summaryAt,
+                keywords: existing?.keywords ?? []
+            )))
 
         case ("POST", "/api/preview"):
             // Summarize and hand the text back for review. Nothing is written —
@@ -89,8 +100,43 @@ public struct VaultAPI: Sendable {
             Log.write("vault: saved \(result.saved), dup \(result.duplicates.count), err \(result.errors.count)")
             completion(.ok(result))
 
+        case ("POST", "/api/update-summary"):
+            // Regenerating reuses /api/preview — summarizing is the same work
+            // whether or not the link is already saved. This endpoint is only
+            // the write-back, so nothing is overwritten until you've seen it.
+            guard let patch = try? JSONDecoder().decode(SummaryPatch.self, from: request.body) else {
+                return completion(.error(400, "invalid payload"))
+            }
+            guard !TextClean.strip(patch.summary).isEmpty else {
+                // An empty summary would silently erase a good one.
+                return completion(.error(400, "summary is empty"))
+            }
+            let result = store.updateSummary(
+                url: patch.url,
+                summary: patch.summary,
+                keywords: patch.keywords
+            )
+            completion(result.success ? .ok(result) : .error(404, result.error ?? "update failed"))
+
         default:
             completion(.error(404, "not found"))
+        }
+    }
+
+    private struct SummaryPatch: Decodable {
+        let url: String
+        let summary: String
+        let keywords: [String]
+
+        enum CodingKeys: String, CodingKey { case url, summary, keywords }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            url = try c.decode(String.self, forKey: .url)
+            summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+            keywords = (try c.decodeIfPresent([String].self, forKey: .keywords) ?? [])
+                .map(TextClean.strip)
+                .filter { !$0.isEmpty }
         }
     }
 
@@ -102,6 +148,11 @@ public struct VaultAPI: Sendable {
     private struct CheckURL: Encodable {
         let exists: Bool
         let exists_in: String?
+        let kind: LinkKind?
+        let title: String?
+        let summary: String?
+        let summary_at: String?
+        let keywords: [String]
     }
 
     private struct PreviewResponse: Encodable {
