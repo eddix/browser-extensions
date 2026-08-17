@@ -12,6 +12,12 @@ content or traffic. Most-specific-domain-wins priority, live conflict
 detection, and radio-style exclusive presets for switching PPE lanes.
 See [hedra/README.md](./hedra/README.md).
 
+### [vesper](./vesper)
+A local Rust service plus a companion MV3 extension that files browser URLs
+into an Obsidian vault as plain Markdown — the durable, browser-independent
+home for bookmarks, read-it-later, and link-shaped TODOs.
+See [vesper/README.md](./vesper/README.md).
+
 ### [nodia](./nodia)
 A native macOS menu-bar app that fuzzy-searches **all** Arc sidebar tabs —
 including the sleeping/unrealized ones the extension can't see. Global hotkey
