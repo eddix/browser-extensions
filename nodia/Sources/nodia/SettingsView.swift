@@ -3,10 +3,175 @@ import NodiaCore
 
 struct SettingsView: View {
     @ObservedObject var themeStore: ThemeStore
+    @ObservedObject var vaultSettings: VaultSettings
+    let onVaultSettingsChanged: () -> Void
+
+    @State private var tokenCopied = false
+    @State private var keyDrafts: [String: String] = [:]
 
     var body: some View {
-        let r = themeStore.resolved
+        TabView {
+            appearance.tabItem { Text("外观") }
+            vault.tabItem { Text("收藏库") }
+            summary.tabItem { Text("摘要") }
+        }
+        .frame(width: 460, height: 560)
+    }
+
+    // MARK: - Summary
+
+    private var summary: some View {
         Form {
+            Section {
+                Toggle("保存时生成摘要", isOn: $vaultSettings.summarizer.enabled)
+                Text("摘要让「存下来能搜到」成立——标题往往只是文档名。正文仅在你点击保存时抓取一次，用完即弃，不写进收藏库。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("内网页面") {
+                endpointFields(
+                    endpoint: $vaultSettings.summarizer.intranet,
+                    placeholder: "https://…/v1/chat/completions"
+                )
+                Text("匹配内网域名的页面只发往这里。**没配就不发**，宁可没有摘要——泄露无法撤回。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("公网页面") {
+                endpointFields(
+                    endpoint: $vaultSettings.summarizer.publicNet,
+                    placeholder: "https://api.openai.com/v1/chat/completions"
+                )
+            }
+
+            Section("内网域名") {
+                TextEditor(text: Binding(
+                    get: { vaultSettings.summarizer.intranetSuffixes.joined(separator: "\n") },
+                    set: { text in
+                        vaultSettings.summarizer.intranetSuffixes = text
+                            .components(separatedBy: .newlines)
+                            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+                            .filter { !$0.isEmpty }
+                    }
+                ))
+                .font(.system(.caption, design: .monospaced))
+                .frame(height: 90)
+                Text("每行一个域名后缀，含子域。命中即视为内网。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func endpointFields(
+        endpoint: Binding<Summarizer.Endpoint>,
+        placeholder: String
+    ) -> some View {
+        TextField("接口地址", text: endpoint.url, prompt: Text(placeholder))
+            .textFieldStyle(.roundedBorder)
+        TextField("模型", text: endpoint.model, prompt: Text("model name"))
+            .textFieldStyle(.roundedBorder)
+        HStack {
+            SecureField("API Key", text: keyBinding(for: endpoint.wrappedValue.keyAccount),
+                        prompt: Text(SecretStore.has(endpoint.wrappedValue.keyAccount)
+                                     ? "已保存在钥匙串" : "sk-…"))
+                .textFieldStyle(.roundedBorder)
+            if SecretStore.has(endpoint.wrappedValue.keyAccount) {
+                Button("清除") {
+                    SecretStore.set("", for: endpoint.wrappedValue.keyAccount)
+                    keyDrafts[endpoint.wrappedValue.keyAccount] = ""
+                }
+            }
+        }
+        Text("Key 存进 macOS 钥匙串，不落配置文件、不进仓库。")
+            .font(.caption).foregroundStyle(.secondary)
+    }
+
+    /// Keys are write-only from the UI: typed here, pushed to the Keychain,
+    /// never read back into the field.
+    private func keyBinding(for account: String) -> Binding<String> {
+        Binding(
+            get: { keyDrafts[account] ?? "" },
+            set: { value in
+                keyDrafts[account] = value
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { SecretStore.set(trimmed, for: account) }
+            }
+        )
+    }
+
+    // MARK: - Vault
+
+    private var vault: some View {
+        Form {
+            Section("Obsidian vault") {
+                HStack {
+                    TextField("路径", text: $vaultSettings.vaultPath)
+                        .textFieldStyle(.roundedBorder)
+                    Button("选择…") { chooseVault() }
+                }
+                Text("浏览器扩展保存的链接会写进这里的 Bookmark/ 目录。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("本地接口") {
+                HStack {
+                    Text("端口")
+                    TextField("端口", value: $vaultSettings.port, format: .number.grouping(.never))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                    Spacer()
+                    Button("重启服务", action: onVaultSettingsChanged)
+                }
+                LabeledContent("状态") {
+                    Text(vaultSettings.status)
+                        .foregroundStyle(vaultSettings.status.hasPrefix("监听") ? .green : .secondary)
+                }
+            }
+
+            Section("配对令牌") {
+                HStack {
+                    Text(vaultSettings.token)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button(tokenCopied ? "已复制" : "复制") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(vaultSettings.token, forType: .string)
+                        tokenCopied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { tokenCopied = false }
+                    }
+                    Button("重新生成") {
+                        vaultSettings.regenerateToken()
+                        onVaultSettingsChanged()
+                    }
+                }
+                Text("粘贴到浏览器扩展的设置页。没有它，本机任何网页都能读写你的收藏库——这正是旧后端的漏洞。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func chooseVault() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = vaultSettings.vaultURL
+        if panel.runModal() == .OK, let url = panel.url {
+            vaultSettings.vaultPath = url.path
+            onVaultSettingsChanged()
+        }
+    }
+
+    // MARK: - Appearance
+
+    private var appearance: some View {
+        let r = themeStore.resolved
+        return Form {
             Section("配色") {
                 Picker("主题", selection: $themeStore.theme.paletteID) {
                     ForEach(Palettes.all) { Text($0.name).tag($0.id) }
@@ -30,7 +195,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 480)
     }
 }
 

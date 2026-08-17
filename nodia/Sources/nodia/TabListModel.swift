@@ -15,7 +15,10 @@ final class TabListModel: ObservableObject {
     @Published var selectedIndex: Int = 0
     @Published var focusRequest: Int = 0   // bumped to (re)focus the search field
 
-    private var tabs: [TabEntry] = []
+    private var arcTabs: [TabEntry] = []
+    private var vaultTabs: [TabEntry] = []
+    private var tabs: [TabEntry] { arcTabs + vaultTabs }
+    private weak var vaultStore: VaultStore?
     private let favicons: FaviconStore?
     private var iconCache: [String: NSImage] = [:]
 
@@ -24,17 +27,55 @@ final class TabListModel: ObservableObject {
         reload()
     }
 
+    /// Lets search reach saved links, not just open tabs.
+    func attachVault(_ store: VaultStore?) {
+        vaultStore = store
+        reloadVault()
+    }
+
     /// Re-read the sidebar (cheap; ~ms for a few hundred tabs).
     func reload() {
         do {
-            tabs = try SidebarParser.parse()
-            let spaces = Set(tabs.map(\.spaceTitle)).count
-            Log.write("reload: parsed \(tabs.count) tabs across \(spaces) spaces")
+            arcTabs = try SidebarParser.parse()
+            let spaces = Set(arcTabs.map(\.spaceTitle)).count
+            Log.write("reload: parsed \(arcTabs.count) tabs across \(spaces) spaces")
         } catch {
-            tabs = []
+            arcTabs = []
             Log.write("reload: parse FAILED: \(error)")
         }
+        reloadVault()
         fillIconCache()
+    }
+
+    private static let kindLabel: [LinkKind: String] = [
+        .bookmark: "书签", .readlater: "稍后读", .todo: "待办",
+    ]
+
+    /// Vault entries ride the same pipeline as tabs, so ranking, highlighting
+    /// and the keyboard all work unchanged. A URL that is *also* an open tab is
+    /// dropped here — switching to the live tab always beats reopening it.
+    private func reloadVault() {
+        guard let vaultStore else { vaultTabs = []; return }
+
+        let openURLs = Set(arcTabs.map { VaultStore.normalize($0.url) })
+        vaultTabs = vaultStore.allEntries().compactMap { entry in
+            guard !openURLs.contains(VaultStore.normalize(entry.url)) else { return nil }
+            // The subtitle slot carries the kind and the summary: visible at a
+            // glance, and searchable, since this field is ranked too.
+            var subtitle = Self.kindLabel[entry.kind] ?? "收藏"
+            if let summary = entry.summary, !summary.isEmpty {
+                subtitle += " · \(summary)"
+            }
+            return TabEntry(
+                id: "vault:\(entry.relativePath):\(entry.url)",
+                title: entry.title,
+                url: entry.url,
+                spaceTitle: subtitle,
+                lastActiveAt: 0,          // sorts below live tabs on an empty query
+                isVault: true
+            )
+        }
+        Log.write("reload: \(vaultTabs.count) vault entries (\(vaultStore.allEntries().count) total)")
     }
 
     func requestFocus() { focusRequest &+= 1 }

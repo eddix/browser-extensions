@@ -42,6 +42,28 @@ do {
         print("  ×\(cluster.count)  \(cluster.keeper.title.prefix(46))")
         print("       keep [\(cluster.keeper.spaceTitle)] · close: \(cluster.duplicates.map(\.spaceTitle).joined(separator: ", "))")
     }
+    // Vault index (read-only): does the store see what's already on disk?
+    let vaultPath = ProcessInfo.processInfo.environment["NODIA_VAULT"]
+        ?? UserDefaults.standard.string(forKey: "nodia.vault.path")
+        ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/Vesper").path
+    print("\n📚 vault: \(vaultPath)")
+    if let store = try? VaultStore(vaultRoot: URL(fileURLWithPath: vaultPath)) {
+        let entries = store.allEntries()
+        let byKind = Dictionary(grouping: entries, by: \.kind)
+        print("   indexed \(entries.count) saved links")
+        for kind in LinkKind.allCases {
+            print("     \(kind.rawValue): \(byKind[kind]?.count ?? 0)")
+        }
+        let withSummary = entries.filter { !($0.summary ?? "").isEmpty }.count
+        print("     有摘要: \(withSummary)/\(entries.count)")
+        for entry in entries.prefix(3) {
+            print("   · [\(entry.kind.rawValue)] \(entry.title.prefix(44))")
+            if let s = entry.summary { print("       summary: \(s.prefix(50))") }
+        }
+    } else {
+        print("   (vault 不可读，跳过)")
+    }
 } catch {
     print("❌ \(error)")
     exit(1)

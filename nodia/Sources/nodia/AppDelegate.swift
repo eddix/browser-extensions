@@ -6,7 +6,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkey: GlobalHotkey?
     private let model = TabListModel()
     private let themeStore = ThemeStore()
-    private lazy var settings = SettingsWindowController(themeStore: themeStore)
+    private let vaultSettings = VaultSettings()
+    private lazy var vault = VaultService(settings: vaultSettings)
+    private lazy var settings = SettingsWindowController(
+        themeStore: themeStore,
+        vaultSettings: vaultSettings,
+        onVaultSettingsChanged: { [weak self] in self?.vault.restart() }
+    )
     private lazy var panel = SearchPanelController(
         model: model,
         themeStore: themeStore,
@@ -21,6 +27,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.action = #selector(statusClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+
+        // Receives saves from the browser extension, and feeds saved links
+        // into search so a closed tab is still one ⌘⇧K away.
+        vault.start()
+        model.attachVault(vault.vaultStore)
 
         // ⌘⇧K
         hotkey = GlobalHotkey(

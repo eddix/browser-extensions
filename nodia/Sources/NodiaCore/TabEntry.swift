@@ -11,12 +11,26 @@ public struct TabEntry: Identifiable, Hashable, Sendable {
     public let host: String        // e.g. "wiki.example.com"
     public let path: String        // e.g. "/docx/IZX0dHQ…" (no query/fragment)
 
-    public init(id: String, title: String, url: String, spaceTitle: String, lastActiveAt: Double) {
+    /// True for rows that come from the Obsidian vault rather than a live Arc
+    /// tab. They have no window to switch to, so they open by URL — and being
+    /// searchable next to real tabs is the point: it's what makes closing a
+    /// tab safe, because the saved copy surfaces the same way.
+    public let isVault: Bool
+
+    public init(
+        id: String,
+        title: String,
+        url: String,
+        spaceTitle: String,
+        lastActiveAt: Double,
+        isVault: Bool = false
+    ) {
         self.id = id
         self.title = title
         self.url = url
         self.spaceTitle = spaceTitle
         self.lastActiveAt = lastActiveAt
+        self.isVault = isVault
 
         let comps = URLComponents(string: url)
         self.host = comps?.host ?? ""

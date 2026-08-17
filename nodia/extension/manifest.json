@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Vesper - Obsidian Bookmark",
-  "version": "0.1.0",
-  "description": "Send browser tabs to Obsidian vault via Vesper backend",
+  "name": "nodia",
+  "version": "1.0.0",
+  "description": "把当前页面存进 Obsidian 收藏库：书签 / 稍后读 / 待办。仅在你点击时抓取，零遥测。",
   "permissions": [
     "tabs",
     "activeTab",
@@ -17,6 +17,7 @@
     "service_worker": "background.js"
   },
   "action": {
+    "default_title": "存为稍后读（右键选其他类型）",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
