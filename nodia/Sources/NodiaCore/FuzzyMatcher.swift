@@ -13,6 +13,9 @@ public enum FuzzyMatcher {
     private static let fields: [(KeyPath<TabEntry, String>, Double)] = [
         (\.title, 1.00),
         (\.host, 0.80),
+        // Keywords are written to be searched, so they outrank the URL path —
+        // a deliberate term beats an incidental substring in a slug.
+        (\.note, 0.70),
         (\.path, 0.50),
         (\.spaceTitle, 0.40),
     ]
@@ -46,7 +49,8 @@ public enum FuzzyMatcher {
             }
         }
         // Cross-field fallback (low weight) so multi-field queries still recall.
-        let combined = "\(tab.title) \(tab.host) \(tab.path) \(tab.spaceTitle)".lowercased()
+        let combined = "\(tab.title) \(tab.host) \(tab.path) \(tab.spaceTitle) \(tab.note)"
+            .lowercased()
         if let s = optimalScore(needle: needle, haystack: Array(combined)) {
             best = max(best ?? Int.min, Int(Double(s) * 0.30))
         }

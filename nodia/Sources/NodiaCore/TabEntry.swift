@@ -17,13 +17,19 @@ public struct TabEntry: Identifiable, Hashable, Sendable {
     /// tab safe, because the saved copy surfaces the same way.
     public let isVault: Bool
 
+    /// Extra text that should match a query but isn't worth screen space —
+    /// a saved link's keywords, so "the one about 接口定义" finds it even when
+    /// neither the title nor the URL says that.
+    public let note: String
+
     public init(
         id: String,
         title: String,
         url: String,
         spaceTitle: String,
         lastActiveAt: Double,
-        isVault: Bool = false
+        isVault: Bool = false,
+        note: String = ""
     ) {
         self.id = id
         self.title = title
@@ -31,6 +37,7 @@ public struct TabEntry: Identifiable, Hashable, Sendable {
         self.spaceTitle = spaceTitle
         self.lastActiveAt = lastActiveAt
         self.isVault = isVault
+        self.note = note
 
         let comps = URLComponents(string: url)
         self.host = comps?.host ?? ""

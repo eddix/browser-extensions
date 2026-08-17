@@ -128,9 +128,20 @@ public struct Summarizer: Sendable {
             : .skip(reason: "未配置公网模型")
     }
 
+    /// A summary plus the words you might search for months from now.
+    public struct Result: Sendable, Equatable {
+        public var summary: String
+        public var keywords: [String]
+
+        public init(summary: String, keywords: [String] = []) {
+            self.summary = summary
+            self.keywords = keywords
+        }
+    }
+
     /// Returns nil when the text must not leave the machine, or on any failure —
     /// callers save the link regardless.
-    public func summarize(title: String, url: String, content: String) async -> String? {
+    public func summarize(title: String, url: String, content: String) async -> Result? {
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
 
         let endpoint: Endpoint
@@ -170,12 +181,7 @@ public struct Summarizer: Sendable {
                 Log.write("summary failed: unexpected response shape for \(url)")
                 return nil
             }
-            // Keep it to a single Markdown line — the vault format is one
-            // `- summary: …` field per entry.
-            let oneLine = TextClean.strip(text)
-                .replacingOccurrences(of: "\n", with: " ")
-                .trimmingCharacters(in: .whitespaces)
-            return oneLine.isEmpty ? nil : oneLine
+            return Self.parseResult(text)
         } catch {
             Log.write("summary failed: \(error.localizedDescription)")
             return nil
@@ -184,8 +190,19 @@ public struct Summarizer: Sendable {
 
     // MARK: - Wire format
 
-    static let instruction =
-        "用一句中文概括这个网页的内容，不超过 60 字，直接给结论，不要以「这篇文章」开头。"
+    /// What a summary is *for* here: finding the page again months later, from
+    /// a half-memory. That is worth more words than a one-liner — the model
+    /// call already costs seconds, so the output should earn them.
+    static let instruction = """
+    为这个网页写一条便于日后检索的记录，只输出 JSON，不要加代码块标记：
+
+    {"summary": "...", "keywords": ["...", "..."]}
+
+    summary：100~150 字中文。说清楚这个页面讲什么、解决什么问题、包含哪些关键内容或结论。\
+    直接陈述，不要以「这篇文章」「本文」开头，不要评价。
+    keywords：3~8 个检索词，覆盖主题、涉及的系统或工具名、关键概念、适用场景。\
+    专有名词保留原文（中英文均可）。日后我可能凭其中任何一个想起这个页面。
+    """
 
     /// Generous relative to a 60-character answer: on a thinking-capable model
     /// `max_tokens` caps reasoning *and* reply together, so a tight budget can
@@ -275,6 +292,44 @@ public struct Summarizer: Sendable {
 
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         return request
+    }
+
+    /// Turns the model's reply into a summary and keywords.
+    ///
+    /// Models wrap JSON in code fences or add a sentence around it often enough
+    /// that strict parsing would throw away good answers — so the JSON object
+    /// is located within the reply, and anything unparseable degrades to being
+    /// the summary itself rather than to nothing.
+    static func parseResult(_ raw: String) -> Result? {
+        let cleaned = TextClean.strip(raw)
+        guard !cleaned.isEmpty else { return nil }
+
+        if let start = cleaned.firstIndex(of: "{"),
+           let end = cleaned.lastIndex(of: "}"),
+           start < end,
+           let data = String(cleaned[start...end]).data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let summary = (json["summary"] as? String).map(TextClean.strip) ?? ""
+            let keywords = (json["keywords"] as? [Any])?
+                .compactMap { $0 as? String }
+                .map(TextClean.strip)
+                .filter { !$0.isEmpty } ?? []
+            if !summary.isEmpty {
+                return Result(summary: oneLine(summary), keywords: keywords)
+            }
+        }
+
+        // Not JSON — treat the whole reply as the summary rather than losing it.
+        return Result(summary: oneLine(cleaned), keywords: [])
+    }
+
+    /// The vault format is one `- summary: …` field per entry, so the text has
+    /// to survive as a single line.
+    private static func oneLine(_ s: String) -> String {
+        s.replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespaces)
     }
 
     static func extractText(wire: WireProtocol, data: Data) -> String? {

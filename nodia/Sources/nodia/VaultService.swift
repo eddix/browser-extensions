@@ -80,12 +80,17 @@ final class VaultService {
         }
 
         Task.detached(priority: .userInitiated) {
-            if let summary = await summarizer.summarize(
+            if let result = await summarizer.summarize(
                 title: title, url: url, content: content
             ) {
-                done(VaultAPI.Preview(summary: summary, reason: nil))
+                done(VaultAPI.Preview(
+                    summary: result.summary, keywords: result.keywords, reason: nil
+                ))
             } else {
-                done(VaultAPI.Preview(summary: nil, reason: "摘要请求失败，详见 ~/Library/Logs/nodia.log"))
+                done(VaultAPI.Preview(
+                    summary: nil, keywords: [],
+                    reason: "摘要请求失败，详见 ~/Library/Logs/nodia.log"
+                ))
             }
         }
     }

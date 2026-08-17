@@ -118,12 +118,13 @@ function isValidUrl(url) {
   return !!url && (url.startsWith('http://') || url.startsWith('https://'));
 }
 
-function payloadFor(tab, kind, { mode = 'single', content = '', summary = '' } = {}) {
+function payloadFor(tab, kind, { mode = 'single', content = '', summary = '', keywords = [] } = {}) {
   return {
     title: tab.title || '',
     url: tab.url,
     kind,
     summary,
+    keywords,
     created_at: new Date().toISOString(),
     source: 'arc',
     mode,
@@ -181,13 +182,16 @@ async function reviewAndSave() {
     if (!panelUp) {
       // No panel to confirm in; save straight away so the page isn't lost.
       const kind = await getLastKind();
-      showSaveResult(await sendLinks(payloadFor(tab, kind, { summary: preview.summary || '' })), kind);
+      showSaveResult(await sendLinks(payloadFor(tab, kind, {
+        summary: preview.summary || '', keywords: preview.keywords || [],
+      })), kind);
       return setIcon('saved');
     }
 
     const decision = await inPage(tab.id, (p) => nodiaPanelDecide(p), [{
       title: preview.title || tab.title || '',
       summary: preview.summary || '',
+      keywords: preview.keywords || [],
       reason: preview.reason || '',
       existsIn: preview.exists_in || '',
       defaultKind: await getLastKind(),
@@ -197,7 +201,10 @@ async function reviewAndSave() {
 
     await chrome.storage.local.set({ [KIND_KEY]: decision.kind });
     const result = await sendLinks(
-      payloadFor(tab, decision.kind, { summary: decision.summary || '' }),
+      payloadFor(tab, decision.kind, {
+        summary: decision.summary || '',
+        keywords: decision.keywords || [],
+      }),
     );
     showSaveResult(result, decision.kind);
     setIcon('saved');
@@ -218,16 +225,18 @@ async function reviewAndSave() {
 async function saveDirectly(tab, kind) {
   const content = await grabContent(tab.id);
   let summary = '';
+  let keywords = [];
   try {
     const preview = await api('/api/preview', {
       method: 'POST',
       body: payloadFor(tab, kind, { content }),
     });
     summary = preview.summary || '';
+    keywords = preview.keywords || [];
   } catch (e) {
     // A failed summary must not block the save.
   }
-  const result = await sendLinks(payloadFor(tab, kind, { summary }));
+  const result = await sendLinks(payloadFor(tab, kind, { summary, keywords }));
   await chrome.storage.local.set({ [KIND_KEY]: kind });
   showSaveResult(result, kind);
   setIcon('saved');

@@ -27,8 +27,11 @@ final class VaultAPIEndToEndTests: XCTestCase {
         // a fixed summary, so the route can be tested without a model.
         let api = VaultAPI(store: store) { _, _, content, done in
             captured.append([content])
-            done(VaultAPI.Preview(summary: content.isEmpty ? nil : "摘要：\(content)",
-                                  reason: content.isEmpty ? "没抓到正文" : nil))
+            done(VaultAPI.Preview(
+                summary: content.isEmpty ? nil : "摘要：\(content)",
+                keywords: content.isEmpty ? [] : ["关键词A", "关键词B"],
+                reason: content.isEmpty ? "没抓到正文" : nil
+            ))
         }
 
         port = UInt16.random(in: 25000...25999)
@@ -198,16 +201,4 @@ final class VaultAPIEndToEndTests: XCTestCase {
         XCTAssertTrue(todayInboxText().isEmpty)
     }
 
-    func testSummaryIsPatchedIntoTheSavedEntry() throws {
-        let payload = Data(#"{"title":"T","url":"https://example.com/s","content":"x"}"#.utf8)
-        XCTAssertEqual(try send("/api/links", method: "POST", body: payload).status, 200)
-        XCTAssertTrue(todayInboxText().contains("- summary: \n"), "初始摘要为空")
-
-        XCTAssertTrue(store.updateSummary(url: "https://example.com/s", summary: "一句话摘要"))
-        XCTAssertTrue(todayInboxText().contains("- summary: 一句话摘要"), todayInboxText())
-
-        // And it survives a reload from disk, so search can use it.
-        let reloaded = try VaultStore(vaultRoot: root)
-        XCTAssertEqual(reloaded.allEntries().first?.summary, "一句话摘要")
-    }
 }

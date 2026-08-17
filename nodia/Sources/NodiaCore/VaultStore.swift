@@ -17,7 +17,20 @@ public final class VaultStore: @unchecked Sendable {
         public let url: String
         public let kind: LinkKind
         public let summary: String?
+        public let keywords: [String]
         public let relativePath: String
+
+        public init(
+            title: String, url: String, kind: LinkKind,
+            summary: String?, keywords: [String] = [], relativePath: String
+        ) {
+            self.title = title
+            self.url = url
+            self.kind = kind
+            self.summary = summary
+            self.keywords = keywords
+            self.relativePath = relativePath
+        }
     }
 
     public struct Duplicate: Codable, Sendable {
@@ -140,12 +153,13 @@ public final class VaultStore: @unchecked Sendable {
         var title: String?
         var kind: LinkKind = .readlater
         var summary: String?
+        var keywords: [String] = []
         var url: String?
 
         // An entry is only complete at its boundary: `summary:` comes *after*
         // `url:`, so emitting on the url line would drop every summary.
         func flush() {
-            defer { title = nil; summary = nil; url = nil; kind = .readlater }
+            defer { title = nil; summary = nil; keywords = []; url = nil; kind = .readlater }
             guard let url else { return }
             let key = Self.normalize(url)
             if urlIndex[key] == nil { urlIndex[key] = relativePath }
@@ -154,6 +168,7 @@ public final class VaultStore: @unchecked Sendable {
                 url: url,
                 kind: kind,
                 summary: summary,
+                keywords: keywords,
                 relativePath: relativePath
             ))
         }
@@ -186,6 +201,11 @@ public final class VaultStore: @unchecked Sendable {
             } else if field.hasPrefix("summary:") {
                 let s = TextClean.strip(String(field.dropFirst("summary:".count)))
                 summary = s.isEmpty ? nil : s
+            } else if field.hasPrefix("keywords:") {
+                keywords = String(field.dropFirst("keywords:".count))
+                    .split(separator: ",")
+                    .map { TextClean.strip(String($0)) }
+                    .filter { !$0.isEmpty }
             } else if field.hasPrefix("url:") {
                 let raw = String(field.dropFirst("url:".count))
                     .trimmingCharacters(in: .whitespaces)
@@ -228,6 +248,7 @@ public final class VaultStore: @unchecked Sendable {
                         url: link.url,
                         kind: link.kind,
                         summary: link.summary,
+                        keywords: link.keywords,
                         relativePath: relative
                     ))
                     saved += 1
@@ -237,59 +258,6 @@ public final class VaultStore: @unchecked Sendable {
             }
             return SaveResult(success: errors.isEmpty, saved: saved,
                               duplicates: duplicates, errors: errors)
-        }
-    }
-
-    /// Fills in the `summary:` field of an already-saved entry.
-    ///
-    /// Summaries are generated after the fact: the extension must get its
-    /// response immediately, while a model call takes seconds. So the link
-    /// lands with an empty summary and this patches the line once the text
-    /// comes back.
-    @discardableResult
-    public func updateSummary(url: String, summary: String) -> Bool {
-        queue.sync {
-            let key = Self.normalize(url)
-            guard let relative = urlIndex[key] else { return false }
-            let file = vaultRoot.appendingPathComponent(relative)
-            guard var text = try? String(contentsOf: file, encoding: .utf8) else { return false }
-
-            var lines = text.components(separatedBy: "\n")
-            guard let urlLine = lines.firstIndex(where: { line in
-                let t = TextClean.removeInvisible(line).trimmingCharacters(in: .whitespaces)
-                guard t.hasPrefix("- url:") else { return false }
-                return Self.normalize(String(t.dropFirst("- url:".count))) == key
-            }) else { return false }
-
-            // Stay inside this entry: stop at the next top-level bullet.
-            var i = urlLine + 1
-            while i < lines.count {
-                let line = TextClean.removeInvisible(lines[i])
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                let indented = line.hasPrefix(" ") || line.hasPrefix("\t")
-                if !indented, trimmed.hasPrefix("- ") { break }
-                if indented, trimmed.hasPrefix("- summary:") {
-                    let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
-                    lines[i] = "\(indent)- summary: \(summary)"
-                    text = lines.joined(separator: "\n")
-                    do {
-                        try text.write(to: file, atomically: true, encoding: .utf8)
-                        for (idx, entry) in entries.enumerated()
-                        where Self.normalize(entry.url) == key {
-                            entries[idx] = Entry(
-                                title: entry.title, url: entry.url, kind: entry.kind,
-                                summary: summary, relativePath: entry.relativePath
-                            )
-                        }
-                        return true
-                    } catch {
-                        Log.write("vault: failed to write summary for \(url)")
-                        return false
-                    }
-                }
-                i += 1
-            }
-            return false
         }
     }
 
@@ -346,6 +314,10 @@ public final class VaultStore: @unchecked Sendable {
             out += "  - window-title: \(w)\n"
         }
         out += "  - tag: #from-browser \(link.kind.tag)\n"
+        if !link.keywords.isEmpty {
+            // Before summary: short, scannable, and the thing you skim for.
+            out += "  - keywords: \(link.keywords.joined(separator: ", "))\n"
+        }
         out += "  - summary: \(link.summary ?? "")\n"
         out += "\n"
         return out

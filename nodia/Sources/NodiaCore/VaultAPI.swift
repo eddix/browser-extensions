@@ -8,12 +8,15 @@ public struct VaultAPI: Sendable {
     /// What `/api/preview` learned about a page before anything is written.
     public struct Preview: Encodable, Sendable {
         public let summary: String?
+        /// Search terms to store alongside the summary.
+        public let keywords: [String]
         /// Why there is no summary — shown in the panel so a broken endpoint is
         /// visible at save time rather than discovered later in the vault.
         public let reason: String?
 
-        public init(summary: String?, reason: String?) {
+        public init(summary: String?, keywords: [String] = [], reason: String?) {
             self.summary = summary
+            self.keywords = keywords
             self.reason = reason
         }
     }
@@ -29,7 +32,7 @@ public struct VaultAPI: Sendable {
     public init(
         store: VaultStore,
         summarize: @escaping @Sendable (String, String, String, @escaping @Sendable (Preview) -> Void) -> Void
-            = { _, _, _, done in done(Preview(summary: nil, reason: "摘要未启用")) }
+            = { _, _, _, done in done(Preview(summary: nil, keywords: [], reason: "摘要未启用")) }
     ) {
         self.store = store
         self.summarize = summarize
@@ -63,6 +66,7 @@ public struct VaultAPI: Sendable {
                 completion(.ok(PreviewResponse(
                     title: link.title,
                     summary: preview.summary,
+                    keywords: preview.keywords,
                     reason: preview.reason,
                     exists_in: existsIn
                 )))
@@ -103,6 +107,7 @@ public struct VaultAPI: Sendable {
     private struct PreviewResponse: Encodable {
         let title: String
         let summary: String?
+        let keywords: [String]
         let reason: String?
         let exists_in: String?
     }

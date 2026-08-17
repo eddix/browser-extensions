@@ -181,4 +181,47 @@ final class VaultStoreTests: XCTestCase {
         let link = try JSONDecoder().decode(VaultLink.self, from: Data(json.utf8))
         XCTAssertEqual(link.title, "https://e.com/x")
     }
+
+    // MARK: - Keywords
+
+    /// Keywords exist to be searched later, so they must survive a round trip
+    /// through disk — that's the whole point of writing them.
+    func testKeywordsRoundTripThroughDisk() throws {
+        let s1 = try store()
+        _ = s1.save([VaultLink(
+            title: "Atlas 指引", url: "https://example.com/j",
+            kind: .bookmark, summary: "开发流程说明",
+            keywords: ["Atlas", "接口定义", "上线流程"]
+        )])
+
+        XCTAssertTrue(read(inboxFile()).contains("  - keywords: Atlas, 接口定义, 上线流程\n"))
+
+        let s2 = try store()   // re-read from disk
+        let entry = try XCTUnwrap(s2.allEntries().first)
+        XCTAssertEqual(entry.keywords, ["Atlas", "接口定义", "上线流程"])
+    }
+
+    /// Entries saved before keywords existed must still parse.
+    func testEntryWithoutKeywordsStillParses() throws {
+        let legacy = """
+        - 旧条目
+          - url: https://example.com/old
+          - tag: #from-browser
+          - summary: 旧摘要
+
+        """
+        try legacy.write(
+            to: root.appendingPathComponent("Bookmark/01-Inbox/links-2026-01-01.md"),
+            atomically: true, encoding: .utf8
+        )
+        let entry = try XCTUnwrap(try store().allEntries().first)
+        XCTAssertEqual(entry.summary, "旧摘要")
+        XCTAssertTrue(entry.keywords.isEmpty)
+    }
+
+    func testNoKeywordsLineWhenEmpty() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "T", url: "https://example.com/n", summary: "x")])
+        XCTAssertFalse(read(inboxFile()).contains("keywords:"))
+    }
 }

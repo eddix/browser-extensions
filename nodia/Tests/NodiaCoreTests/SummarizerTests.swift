@@ -243,4 +243,41 @@ final class SummarizerTests: XCTestCase {
         XCTAssertEqual(decoded.wire, .openai)
         XCTAssertEqual(decoded.model, "m")
     }
+
+    // MARK: - Structured result parsing
+
+    func testParsesSummaryAndKeywords() throws {
+        let raw = #"{"summary":"讲了 Atlas 的开发流程。","keywords":["Atlas","接口定义"]}"#
+        let r = try XCTUnwrap(Summarizer.parseResult(raw))
+        XCTAssertEqual(r.summary, "讲了 Atlas 的开发流程。")
+        XCTAssertEqual(r.keywords, ["Atlas", "接口定义"])
+    }
+
+    /// Models wrap JSON in code fences often enough that strict parsing would
+    /// throw away perfectly good answers.
+    func testParsesJSONInsideCodeFence() throws {
+        let raw = "```json\n{\"summary\":\"摘要内容\",\"keywords\":[\"A\"]}\n```"
+        let r = try XCTUnwrap(Summarizer.parseResult(raw))
+        XCTAssertEqual(r.summary, "摘要内容")
+        XCTAssertEqual(r.keywords, ["A"])
+    }
+
+    /// A reply that isn't JSON is still a summary — degrade, don't discard.
+    func testNonJSONReplyBecomesTheSummary() throws {
+        let r = try XCTUnwrap(Summarizer.parseResult("这就是一段普通的摘要文字。"))
+        XCTAssertEqual(r.summary, "这就是一段普通的摘要文字。")
+        XCTAssertTrue(r.keywords.isEmpty)
+    }
+
+    /// The vault format is one field per line, so newlines can't survive.
+    func testSummaryIsFlattenedToOneLine() throws {
+        let raw = #"{"summary":"第一行\n第二行","keywords":[]}"#
+        let r = try XCTUnwrap(Summarizer.parseResult(raw))
+        XCTAssertFalse(r.summary.contains("\n"))
+        XCTAssertEqual(r.summary, "第一行 第二行")
+    }
+
+    func testEmptyReplyYieldsNil() {
+        XCTAssertNil(Summarizer.parseResult("   "))
+    }
 }

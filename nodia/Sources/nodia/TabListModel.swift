@@ -72,7 +72,9 @@ final class TabListModel: ObservableObject {
                 url: entry.url,
                 spaceTitle: subtitle,
                 lastActiveAt: 0,          // sorts below live tabs on an empty query
-                isVault: true
+                isVault: true,
+                // Matched but not shown: the row already carries the summary.
+                note: entry.keywords.joined(separator: " ")
             )
         }
         Log.write("reload: \(vaultTabs.count) vault entries (\(vaultStore.allEntries().count) total)")

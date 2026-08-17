@@ -23,6 +23,9 @@ public struct VaultLink: Codable, Sendable {
     public var url: String
     public var kind: LinkKind
     public var summary: String?
+    /// Search terms for finding this again later — the point of summarizing at
+    /// all. Stored as one `- keywords:` line and fed into nodia's matcher.
+    public var keywords: [String]
     public var source: String?
     public var mode: String?
     public var windowTitle: String?
@@ -36,6 +39,7 @@ public struct VaultLink: Codable, Sendable {
         url: String,
         kind: LinkKind = .readlater,
         summary: String? = nil,
+        keywords: [String] = [],
         source: String? = nil,
         mode: String? = nil,
         windowTitle: String? = nil,
@@ -46,6 +50,7 @@ public struct VaultLink: Codable, Sendable {
         self.url = url
         self.kind = kind
         self.summary = summary
+        self.keywords = keywords
         self.source = source
         self.mode = mode
         self.windowTitle = windowTitle
@@ -54,7 +59,7 @@ public struct VaultLink: Codable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case title, url, kind, summary, source, mode, content
+        case title, url, kind, summary, keywords, source, mode, content
         case windowTitle = "window_title"
         case createdAt = "created_at"
     }
@@ -70,6 +75,9 @@ public struct VaultLink: Codable, Sendable {
         // readlater: it is the largest bucket and the least committal one.
         kind = try c.decodeIfPresent(LinkKind.self, forKey: .kind) ?? .readlater
         summary = try c.decodeIfPresent(String.self, forKey: .summary).map(TextClean.strip)
+        keywords = (try c.decodeIfPresent([String].self, forKey: .keywords) ?? [])
+            .map(TextClean.strip)
+            .filter { !$0.isEmpty }
         source = try c.decodeIfPresent(String.self, forKey: .source)
         mode = try c.decodeIfPresent(String.self, forKey: .mode)
         windowTitle = try c.decodeIfPresent(String.self, forKey: .windowTitle).map(TextClean.strip)
