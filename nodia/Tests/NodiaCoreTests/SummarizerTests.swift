@@ -93,8 +93,8 @@ final class SummarizerTests: XCTestCase {
 
     func testEmptyContentProducesNoSummary() async {
         let s = Summarizer(config: config())
-        let result = await s.summarize(title: "T", url: "https://github.com/a", content: "   ")
-        XCTAssertNil(result)
+        let outcome = await s.summarize(title: "T", url: "https://github.com/a", content: "   ")
+        XCTAssertEqual(outcome, .failed(reason: "没抓到正文"))
     }
 
     /// Wiki is on the intranet list even though the domain is publicly
@@ -197,42 +197,104 @@ final class SummarizerTests: XCTestCase {
 
     // MARK: - Response parsing
 
-    func testParsesOpenAIResponse() {
+    /// Unwraps a successful extraction, failing the test with the reason.
+    private func text(_ e: Summarizer.Extraction) throws -> String {
+        guard case .text(let t) = e else {
+            XCTFail("应解析出文本，实际是 \(e)")
+            throw XCTSkip("no text")
+        }
+        return t
+    }
+
+    /// The user-facing half of a failure — what the panel shows.
+    private func reason(_ e: Summarizer.Extraction) -> String? {
+        guard case .failed(let reason, _) = e else { return nil }
+        return reason
+    }
+
+    func testParsesOpenAIResponse() throws {
         let json = Data(#"{"choices":[{"message":{"content":"一句话摘要"}}]}"#.utf8)
-        XCTAssertEqual(Summarizer.extractText(wire: .openai, data: json), "一句话摘要")
+        XCTAssertEqual(try text(Summarizer.extractText(wire: .openai, data: json)), "一句话摘要")
     }
 
     /// The critical one: `content` is a block array, and on a thinking-capable
     /// model the reasoning block comes first. Indexing content[0] yields empty
     /// text — blocks have to be filtered by type.
-    func testParsesAnthropicResponseWithLeadingThinkingBlock() {
+    func testParsesAnthropicResponseWithLeadingThinkingBlock() throws {
         let json = Data("""
         {"stop_reason":"end_turn","content":[
           {"type":"thinking","thinking":""},
           {"type":"text","text":"一句话摘要"}
         ]}
         """.utf8)
-        XCTAssertEqual(Summarizer.extractText(wire: .anthropic, data: json), "一句话摘要")
+        XCTAssertEqual(try text(Summarizer.extractText(wire: .anthropic, data: json)), "一句话摘要")
     }
 
-    func testJoinsMultipleAnthropicTextBlocks() {
+    func testJoinsMultipleAnthropicTextBlocks() throws {
         let json = Data("""
         {"content":[{"type":"text","text":"前半"},{"type":"text","text":"后半"}]}
         """.utf8)
-        XCTAssertEqual(Summarizer.extractText(wire: .anthropic, data: json), "前半后半")
+        XCTAssertEqual(try text(Summarizer.extractText(wire: .anthropic, data: json)), "前半后半")
     }
 
     /// A policy decline is HTTP 200 with an empty content array — a normal
     /// response that must not be mistaken for a summary or an error.
     func testAnthropicRefusalYieldsNoSummary() {
         let json = Data(#"{"stop_reason":"refusal","content":[]}"#.utf8)
-        XCTAssertNil(Summarizer.extractText(wire: .anthropic, data: json))
+        XCTAssertEqual(reason(Summarizer.extractText(wire: .anthropic, data: json)),
+                       "模型以内容策略拒绝了这个页面")
     }
 
     func testMismatchedShapeYieldsNil() {
         let openAIShaped = Data(#"{"choices":[{"message":{"content":"x"}}]}"#.utf8)
-        XCTAssertNil(Summarizer.extractText(wire: .anthropic, data: openAIShaped),
-                     "协议选错时应返回 nil，而不是崩溃或写入垃圾摘要")
+        XCTAssertNotNil(reason(Summarizer.extractText(wire: .anthropic, data: openAIShaped)),
+                        "协议选错时应报错，而不是崩溃或写入垃圾摘要")
+    }
+
+    // MARK: - Reasoning that ate the whole budget
+
+    /// Reproduced against glm-5.3: reasoning runs first and shares max_tokens
+    /// with the reply, so hitting the cap returns a full thinking block and an
+    /// empty text one. HTTP 200, valid JSON, no summary.
+    ///
+    /// This has to be named, not lumped in with "unexpected response shape" —
+    /// it is the one failure whose fix (a bigger budget) is knowable from the
+    /// response itself.
+    func testAnthropicTruncatedByThinkingIsReportedAsTruncation() {
+        let json = Data("""
+        {"stop_reason":"max_tokens","usage":{"output_tokens":1024},"content":[
+          {"type":"thinking","thinking":"很长的推理过程"},
+          {"type":"text","text":""}
+        ]}
+        """.utf8)
+        let extraction = Summarizer.extractText(wire: .anthropic, data: json)
+        XCTAssertEqual(reason(extraction), "模型思考占满了输出额度，没留下摘要正文")
+
+        guard case .failed(_, let detail) = extraction else { return XCTFail("应为失败") }
+        XCTAssertTrue(detail.contains("max_tokens"), detail)
+        XCTAssertTrue(detail.contains("thinking="), "日志里要带上思考长度，便于判断额度够不够")
+    }
+
+    /// Same failure on the OpenAI wire, where truncation is `finish_reason`.
+    func testOpenAITruncatedResponseIsReportedAsTruncation() {
+        let json = Data(#"{"choices":[{"finish_reason":"length","message":{"content":""}}]}"#.utf8)
+        XCTAssertEqual(reason(Summarizer.extractText(wire: .openai, data: json)),
+                       "模型思考占满了输出额度，没留下摘要正文")
+    }
+
+    /// An empty reply that wasn't truncated is a different problem and must
+    /// not borrow the truncation message.
+    func testEmptyButCompleteReplyIsNotCalledTruncation() {
+        let json = Data(#"{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":"x"}]}"#.utf8)
+        XCTAssertEqual(reason(Summarizer.extractText(wire: .anthropic, data: json)),
+                       "模型返回了空内容")
+    }
+
+    /// The budget has to leave room for reasoning *and* the answer. 1024 was
+    /// measured to be too small for a 6000-character page.
+    func testTokenBudgetLeavesRoomForReasoning() {
+        XCTAssertGreaterThanOrEqual(Summarizer.maxTokens, 4096,
+                                    "思考与正文共用额度，给小了就只剩思考")
     }
 
     /// Settings saved before the protocol picker existed decode without the

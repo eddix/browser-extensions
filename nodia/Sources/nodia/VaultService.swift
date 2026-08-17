@@ -99,17 +99,15 @@ final class VaultService {
         }
 
         Task.detached(priority: .userInitiated) {
-            if let result = await summarizer.summarize(
-                title: title, url: url, content: content
-            ) {
+            switch await summarizer.summarize(title: title, url: url, content: content) {
+            case .summarized(let result):
                 done(VaultAPI.Preview(
                     summary: result.summary, keywords: result.keywords, reason: nil
                 ))
-            } else {
-                done(VaultAPI.Preview(
-                    summary: nil, keywords: [],
-                    reason: "摘要请求失败，详见 ~/Library/Logs/nodia.log"
-                ))
+            case .failed(let reason):
+                // The reason is shown in the panel. The log still has the
+                // long form, but you shouldn't need it to know what happened.
+                done(VaultAPI.Preview(summary: nil, keywords: [], reason: reason))
             }
         }
     }

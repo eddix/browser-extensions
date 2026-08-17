@@ -128,6 +128,17 @@ public struct Summarizer: Sendable {
             : .skip(reason: "未配置公网模型")
     }
 
+    /// Either a summary, or why there isn't one — phrased for the panel.
+    ///
+    /// "It failed, check the log" makes the user do the diagnosis. The reasons
+    /// that actually occur (wrong model name, unset key, reasoning that ate the
+    /// token budget) each imply a different fix, so they're worth telling apart
+    /// at the point where you can still act on it.
+    public enum Outcome: Sendable, Equatable {
+        case summarized(Result)
+        case failed(reason: String)
+    }
+
     /// A summary plus the words you might search for months from now.
     public struct Result: Sendable, Equatable {
         public var summary: String
@@ -139,10 +150,12 @@ public struct Summarizer: Sendable {
         }
     }
 
-    /// Returns nil when the text must not leave the machine, or on any failure —
-    /// callers save the link regardless.
-    public func summarize(title: String, url: String, content: String) async -> Result? {
-        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    /// Never throws and never blocks the save: a link with no summary is still
+    /// a saved link, so every failure comes back as a reason to show.
+    public func summarize(title: String, url: String, content: String) async -> Outcome {
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failed(reason: "没抓到正文")
+        }
 
         let endpoint: Endpoint
         switch route(for: url) {
@@ -150,11 +163,11 @@ public struct Summarizer: Sendable {
         case .publicNet: endpoint = config.publicNet
         case .skip(let reason):
             Log.write("summary skipped (\(reason)): \(url)")
-            return nil
+            return .failed(reason: reason)
         }
 
         guard let requestURL = Self.resolvedURL(endpoint.url, wire: endpoint.wire) else {
-            return nil
+            return .failed(reason: "接口地址无法解析：\(endpoint.url)")
         }
         let key = SecretStore.get(endpoint.keyAccount) ?? ""
 
@@ -175,16 +188,22 @@ public struct Summarizer: Sendable {
                 // the same.
                 let detail = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
                 Log.write("summary failed: HTTP \(code) for \(url) — \(detail)")
-                return nil
+                return .failed(reason: "模型返回 HTTP \(code)")
             }
-            guard let text = Self.extractText(wire: endpoint.wire, data: data) else {
-                Log.write("summary failed: unexpected response shape for \(url)")
-                return nil
+            switch Self.extractText(wire: endpoint.wire, data: data) {
+            case .text(let text):
+                guard let result = Self.parseResult(text) else {
+                    Log.write("summary failed: empty reply for \(url)")
+                    return .failed(reason: "模型返回了空内容")
+                }
+                return .summarized(result)
+            case .failed(let reason, let detail):
+                Log.write("summary failed: \(detail) for \(url)")
+                return .failed(reason: reason)
             }
-            return Self.parseResult(text)
         } catch {
             Log.write("summary failed: \(error.localizedDescription)")
-            return nil
+            return .failed(reason: error.localizedDescription)
         }
     }
 
@@ -204,10 +223,18 @@ public struct Summarizer: Sendable {
     专有名词保留原文（中英文均可）。日后我可能凭其中任何一个想起这个页面。
     """
 
-    /// Generous relative to a 60-character answer: on a thinking-capable model
-    /// `max_tokens` caps reasoning *and* reply together, so a tight budget can
-    /// be spent entirely on thinking and return nothing.
-    static let maxTokens = 1024
+    /// Far more than the answer needs, because on a thinking-capable model
+    /// `max_tokens` caps reasoning *and* reply together — and reasoning goes
+    /// first, so a tight budget is spent entirely on thinking and returns an
+    /// empty text block.
+    ///
+    /// Measured against `glm-5.3` (which can't be told to stop thinking) on a
+    /// 6000-character page: 1024 and 2048 both came back `stop_reason:
+    /// max_tokens` with zero characters of summary; 4096 finished in 894. Note
+    /// the reasoning length is not stable — the same request thought for 4485
+    /// characters under a 2048 budget and 1823 under a 4096 one — so this is
+    /// headroom, not a limit anyone should tune down to fit.
+    static let maxTokens = 4096
 
     /// Completes a configured address into the endpoint actually being called.
     ///
@@ -332,36 +359,75 @@ public struct Summarizer: Sendable {
             .trimmingCharacters(in: .whitespaces)
     }
 
-    static func extractText(wire: WireProtocol, data: Data) -> String? {
+    /// The reply text, or why it couldn't be read: a user-facing reason and a
+    /// longer line for the log.
+    enum Extraction: Equatable {
+        case text(String)
+        case failed(reason: String, detail: String)
+    }
+
+    static func extractText(wire: WireProtocol, data: Data) -> Extraction {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
+            return .failed(reason: "模型返回的不是 JSON", detail: "response was not JSON")
         }
+
+        // Truncation is worth naming on both wires: it's the one failure the
+        // user can act on, and the action isn't obvious from "it failed".
+        let truncated = "模型思考占满了输出额度，没留下摘要正文"
 
         switch wire {
         case .openai:
             guard
                 let choices = json["choices"] as? [[String: Any]],
-                let message = choices.first?["message"] as? [String: Any],
-                let text = message["content"] as? String
-            else { return nil }
-            return text
+                let first = choices.first,
+                let message = first["message"] as? [String: Any]
+            else {
+                return .failed(reason: "无法解析模型返回", detail: "no choices[0].message")
+            }
+            guard let text = message["content"] as? String, !text.isEmpty else {
+                if first["finish_reason"] as? String == "length" {
+                    return .failed(reason: truncated, detail: "finish_reason=length, empty content")
+                }
+                return .failed(reason: "模型返回了空内容", detail: "choices[0].message.content empty")
+            }
+            return .text(text)
 
         case .anthropic:
             // A safety decline is HTTP 200 with an empty content array — it is
             // a normal response, not an error, and must not be read as one.
             if json["stop_reason"] as? String == "refusal" {
-                Log.write("summary refused by model policy")
-                return nil
+                return .failed(reason: "模型以内容策略拒绝了这个页面",
+                               detail: "stop_reason=refusal")
             }
             // `content` is an array of blocks. On a thinking-capable model the
             // first block is the reasoning, so blocks must be filtered by type
             // rather than indexed — content[0].text is often empty.
-            guard let blocks = json["content"] as? [[String: Any]] else { return nil }
+            guard let blocks = json["content"] as? [[String: Any]] else {
+                return .failed(reason: "无法解析模型返回", detail: "no content array")
+            }
             let text = blocks
                 .filter { $0["type"] as? String == "text" }
                 .compactMap { $0["text"] as? String }
                 .joined()
-            return text.isEmpty ? nil : text
+            guard !text.isEmpty else {
+                // Reasoning runs before the answer and shares the same budget,
+                // so hitting the cap yields a thinking block and an empty text
+                // one. Saying "unexpected response shape" here sent the user
+                // to the log for something the panel could have just told them.
+                if json["stop_reason"] as? String == "max_tokens" {
+                    let thought = blocks
+                        .filter { $0["type"] as? String == "thinking" }
+                        .compactMap { ($0["thinking"] as? String)?.count }
+                        .reduce(0, +)
+                    return .failed(
+                        reason: truncated,
+                        detail: "stop_reason=max_tokens, thinking=\(thought) chars, text=0"
+                    )
+                }
+                let types = blocks.compactMap { $0["type"] as? String }.joined(separator: ",")
+                return .failed(reason: "模型返回了空内容", detail: "no text block (blocks: \(types))")
+            }
+            return .text(text)
         }
     }
 }
