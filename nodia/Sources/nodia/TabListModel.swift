@@ -60,15 +60,16 @@ final class TabListModel: ObservableObject {
         guard let vaultStore else { templates = []; jumpRows = []; return }
         templates = JumpStore.load(vaultRoot: vaultStore.vaultRoot)
         jumpRows = templates.map { t in
-            let params = t.parameters.joined(separator: " · ")
+            let params = t.parameters.map { "{\($0)}" }.joined(separator: " ")
             return TabEntry(
                 id: "jump:\(t.name)",
                 title: t.name,
                 url: t.urlTemplate,
-                spaceTitle: "跳转" + (params.isEmpty ? "" : " · \(params)"),
+                spaceTitle: "跳转",
                 lastActiveAt: 0,
                 origin: .jumpTemplate,
-                note: (t.keywords + [t.note ?? ""]).joined(separator: " ")
+                subtitle: t.note ?? (params.isEmpty ? t.urlTemplate : "参数：\(params)"),
+                note: (t.keywords + [t.urlTemplate]).joined(separator: " ")
             )
         }
         Log.write("reload: \(templates.count) jump templates")
@@ -155,21 +156,21 @@ final class TabListModel: ObservableObject {
         let openURLs = Set(arcTabs.map { VaultStore.normalize($0.url) })
         vaultTabs = vaultStore.allEntries().compactMap { entry in
             guard !openURLs.contains(VaultStore.normalize(entry.url)) else { return nil }
-            // The subtitle slot carries the kind and the summary: visible at a
-            // glance, and searchable, since this field is ranked too.
-            var subtitle = Self.kindLabel[entry.kind] ?? "收藏"
-            if let summary = entry.summary, !summary.isEmpty {
-                subtitle += " · \(summary)"
-            }
+            // The right-hand tag stays short — it shares a line with the title.
+            // The summary goes on the detail line, where a URL would be: for a
+            // saved link the summary is the part worth reading.
+            let summary = entry.summary ?? ""
             return TabEntry(
                 id: "vault:\(entry.relativePath):\(entry.url)",
                 title: entry.title,
                 url: entry.url,
-                spaceTitle: subtitle,
+                spaceTitle: Self.kindLabel[entry.kind] ?? "收藏",
                 lastActiveAt: 0,          // sorts below live tabs on an empty query
                 origin: .vault,
-                // Matched but not shown: the row already carries the summary.
-                note: entry.keywords.joined(separator: " ")
+                subtitle: summary.isEmpty ? nil : summary,
+                // Keywords match without taking space; the summary is matchable
+                // too, so searching a phrase from it finds the entry.
+                note: (entry.keywords + [summary]).joined(separator: " ")
             )
         }
         Log.write("reload: \(vaultTabs.count) vault entries (\(vaultStore.allEntries().count) total)")

@@ -369,8 +369,9 @@ private struct TabRow: View {
     let theme: ResolvedTheme
 
     var body: some View {
-        // Highlight fields: title, the displayed URL (host+path), space.
-        let m = MatchHighlight.matches(query: query, fields: [tab.title, tab.prettyURL, tab.spaceTitle])
+        // Highlight fields: title, the detail line (URL, or a saved link's
+        // summary), and the short right-hand tag.
+        let m = MatchHighlight.matches(query: query, fields: [tab.title, tab.detailLine, tab.spaceTitle])
         HStack(spacing: 10) {
             favicon(icon, theme: theme)
             VStack(alignment: .leading, spacing: 1) {
@@ -379,13 +380,18 @@ private struct TabRow: View {
                         .lineLimit(1).font(theme.titleFont).foregroundStyle(theme.palette.foreground)
                     Spacer(minLength: 8)
                     if !tab.spaceTitle.isEmpty {
+                        // Capped and truncating: this tag shares a line with the
+                        // title, so an unexpectedly long value must shrink
+                        // rather than push the row past the panel's edge.
                         Text(highlighted(tab.spaceTitle, Set(m[2]), theme: theme))
-                            .lineLimit(1).font(theme.captionFont)
+                            .lineLimit(1).truncationMode(.tail)
+                            .font(theme.captionFont)
                             .foregroundStyle(theme.palette.secondary)
-                            .fixedSize(horizontal: true, vertical: false)
+                            .layoutPriority(-1)
+                            .frame(maxWidth: 180, alignment: .trailing)
                     }
                 }
-                Text(highlighted(tab.prettyURL, Set(m[1]), theme: theme))
+                Text(highlighted(tab.detailLine, Set(m[1]), theme: theme))
                     .lineLimit(1).truncationMode(.tail)
                     .font(theme.subtitleFont).foregroundStyle(theme.palette.secondary)
             }

@@ -28,6 +28,11 @@ public struct TabEntry: Identifiable, Hashable, Sendable {
     /// question most callers actually ask.
     public var isVault: Bool { origin != .arcTab }
 
+    /// Second line of the row. Nil means "show the URL", which is what a tab
+    /// wants; a saved link would rather show its summary, since that's the
+    /// part worth reading.
+    public let subtitle: String?
+
     /// Extra text that should match a query but isn't worth screen space —
     /// a saved link's keywords, so "the one about 接口定义" finds it even when
     /// neither the title nor the URL says that.
@@ -40,6 +45,7 @@ public struct TabEntry: Identifiable, Hashable, Sendable {
         spaceTitle: String,
         lastActiveAt: Double,
         origin: Origin = .arcTab,
+        subtitle: String? = nil,
         note: String = ""
     ) {
         self.id = id
@@ -48,6 +54,7 @@ public struct TabEntry: Identifiable, Hashable, Sendable {
         self.spaceTitle = spaceTitle
         self.lastActiveAt = lastActiveAt
         self.origin = origin
+        self.subtitle = subtitle
         self.note = note
 
         let comps = URLComponents(string: url)
@@ -59,4 +66,7 @@ public struct TabEntry: Identifiable, Hashable, Sendable {
     public var prettyURL: String {
         host.isEmpty ? url : host + path
     }
+
+    /// What the row's second line actually shows.
+    public var detailLine: String { subtitle ?? prettyURL }
 }

@@ -50,6 +50,34 @@ enum Palettes {
         highlight: Color(hex: 0xFABD2F)
     )
 
-    static let all: [Palette] = [system, light, nord, dracula, solarized, rosePine, gruvbox]
+    // Deep navy with a butter-yellow focus.
+    static let midnightButter = Palette(
+        id: "midnightButter", name: "午夜黄油", isDark: true,
+        tint: Color(hex: 0x0D1520), tintOpacity: 0.62,
+        foreground: Color(hex: 0xF5F7FA), secondary: Color(hex: 0x7A8C9E),
+        accent: Color(hex: 0xF4E4C1), selection: Color(hex: 0xF4E4C1).opacity(0.20),
+        highlight: Color(hex: 0xF4E4C1)
+    )
+    // Charcoal with a retro-red accent.
+    static let charcoalRed = Palette(
+        id: "charcoalRed", name: "炭黑复古红", isDark: true,
+        tint: Color(hex: 0x121214), tintOpacity: 0.62,
+        foreground: Color(hex: 0xFFFFFF), secondary: Color(hex: 0x62626A),
+        accent: Color(hex: 0xFF4545), selection: Color(hex: 0xFF4545).opacity(0.22),
+        highlight: Color(hex: 0xFF4545)
+    )
+    // Ink-green with sand-gold highlights.
+    static let inkGreen = Palette(
+        id: "inkGreen", name: "墨绿沙金", isDark: true,
+        tint: Color(hex: 0x111613), tintOpacity: 0.62,
+        foreground: Color(hex: 0xECF0ED), secondary: Color(hex: 0x5E7066),
+        accent: Color(hex: 0xD4B996), selection: Color(hex: 0xD4B996).opacity(0.22),
+        highlight: Color(hex: 0xD4B996)
+    )
+
+    static let all: [Palette] = [
+        system, light, nord, dracula, solarized, rosePine, gruvbox,
+        midnightButter, charcoalRed, inkGreen,
+    ]
     static let byID: [String: Palette] = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
 }
