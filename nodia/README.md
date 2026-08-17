@@ -46,12 +46,28 @@ what you saved. One index, one prompt, one process.
 `chrome://extensions`). It sends the current page to nodia, which files it into
 the vault as Markdown.
 
-- **Click the icon** → saves as *read later*. One action, no questions — it's
-  the biggest and least committal bucket.
-- **Right-click** → save as *bookmark* or *todo* instead. TODOs are written as
-  `- [ ]` checkboxes into `Bookmark/00-Todo.md`, so Obsidian Tasks and your
-  daily note can pick them up; a tab bar can't represent "done".
-- The icon turns green on pages already in the vault.
+- **Click the icon** → a review panel: it extracts the page text, summarizes
+  it, and shows you the result *before* anything is written. Edit the summary
+  if the model drifted, then pick a kind — `1`/`2`/`3` for bookmark / read
+  later / todo, `⏎` for the one you used last, `esc` to cancel.
+- **Right-click** → save as a given kind straight away, skipping the panel
+  (still summarized — the kind is already explicit, so there's nothing to
+  confirm). TODOs are written as `- [ ]` checkboxes into `Bookmark/00-Todo.md`,
+  so Obsidian Tasks and your daily note can pick them up; a tab bar can't
+  represent "done".
+- The icon turns green on pages already in the vault, and the panel says so
+  before you save a duplicate.
+
+The review step is deliberate. Saving without seeing the result is what
+produced the original problem: every link already in the vault was *also*
+still pinned in the browser, because a save you can't inspect isn't one you'll
+trust enough to close the tab on. Reviewing costs a few seconds and buys the
+thing the whole tool is for. It also surfaces a broken summary endpoint at
+save time rather than weeks later, as a vault full of empty `summary:` fields.
+
+Expect the summary itself to take a few seconds — on a thinking-capable model
+(most current ones) it can be 5–15s, and some, like `glm-5.3`, don't allow
+thinking to be switched off. The panel shows progress while it works.
 
 ### Data-safety lines this must not cross
 

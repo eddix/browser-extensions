@@ -142,7 +142,9 @@ public struct Summarizer: Sendable {
             return nil
         }
 
-        guard let requestURL = URL(string: endpoint.url) else { return nil }
+        guard let requestURL = Self.resolvedURL(endpoint.url, wire: endpoint.wire) else {
+            return nil
+        }
         let key = SecretStore.get(endpoint.keyAccount) ?? ""
 
         let request = Self.buildRequest(
@@ -189,6 +191,39 @@ public struct Summarizer: Sendable {
     /// `max_tokens` caps reasoning *and* reply together, so a tight budget can
     /// be spent entirely on thinking and return nothing.
     static let maxTokens = 1024
+
+    /// Completes a configured address into the endpoint actually being called.
+    ///
+    /// Gateways publish a **base** URL (`ANTHROPIC_BASE_URL` style), so that is
+    /// what people paste — while the request has to go to `/v1/messages` or
+    /// `/v1/chat/completions`. Posting to the bare base returns an auth error
+    /// rather than a routing one, which sends you looking at the key. Accept
+    /// either form instead.
+    static func resolvedURL(_ raw: String, wire: WireProtocol) -> URL? {
+        var base = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while base.hasSuffix("/") { base.removeLast() }
+        guard !base.isEmpty else { return nil }
+
+        // A trailing version segment is the gateway's own — don't add a second
+        // one. Volcengine's OpenAI base ends in `/api/v3`, so matching only
+        // `/v1` would produce `/api/v3/v1/chat/completions`.
+        let lastSegment = base.split(separator: "/").last.map(String.init) ?? ""
+        let endsWithVersion =
+            lastSegment.range(of: "^v[0-9]+$", options: .regularExpression) != nil
+
+        let path: String
+        switch wire {
+        case .anthropic:
+            if base.hasSuffix("/messages") { path = "" }
+            else if endsWithVersion { path = "/messages" }
+            else { path = "/v1/messages" }
+        case .openai:
+            if base.hasSuffix("/chat/completions") { path = "" }
+            else if endsWithVersion { path = "/chat/completions" }
+            else { path = "/v1/chat/completions" }
+        }
+        return URL(string: base + path)
+    }
 
     static func buildRequest(
         endpoint: Endpoint,

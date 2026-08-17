@@ -17,7 +17,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "存为稍后读（右键选其他类型）",
+    "default_title": "保存到收藏库（先看摘要再确认）",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

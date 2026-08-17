@@ -58,7 +58,10 @@ public final class LocalHTTPServer: @unchecked Sendable {
         }
     }
 
-    public typealias Handler = @Sendable (Request) -> Response
+    /// Callback-style rather than returning a `Response` directly: generating a
+    /// summary means waiting on a model, and every connection shares one queue —
+    /// blocking it to await would stall every other request.
+    public typealias Handler = @Sendable (Request, @escaping @Sendable (Response) -> Void) -> Void
 
     private let port: UInt16
     private let tokenProvider: @Sendable () -> String
@@ -130,8 +133,9 @@ public final class LocalHTTPServer: @unchecked Sendable {
             // Keep reading until headers are complete and the declared body has
             // arrived — extracted page text easily spans several TCP segments.
             if let request = Self.parse(buffer) {
-                let response = self.route(request)
-                self.send(response, on: conn, origin: request.origin)
+                self.route(request) { response in
+                    self.send(response, on: conn, origin: request.origin)
+                }
             } else if isComplete {
                 conn.cancel()
             } else {
@@ -140,16 +144,18 @@ public final class LocalHTTPServer: @unchecked Sendable {
         }
     }
 
-    private func route(_ request: Request) -> Response {
+    private func route(_ request: Request, completion: @escaping @Sendable (Response) -> Void) {
         // Preflight: answered without the token, but only for the extension.
-        if request.method == "OPTIONS" { return Response(status: 204, json: Data()) }
+        if request.method == "OPTIONS" {
+            return completion(Response(status: 204, json: Data()))
+        }
 
         let expected = tokenProvider()
         guard let auth = request.bearerToken, !expected.isEmpty, auth == expected else {
             Log.write("http: rejected \(request.method) \(request.path) — bad or missing token")
-            return .error(401, "unauthorized")
+            return completion(.error(401, "unauthorized"))
         }
-        return handler(request)
+        handler(request, completion)
     }
 
     private func send(_ response: Response, on conn: NWConnection, origin: String?) {

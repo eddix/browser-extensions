@@ -118,30 +118,119 @@ function isValidUrl(url) {
   return !!url && (url.startsWith('http://') || url.startsWith('https://'));
 }
 
-async function payloadFor(tab, kind, mode = 'single') {
+function payloadFor(tab, kind, { mode = 'single', content = '', summary = '' } = {}) {
   return {
     title: tab.title || '',
     url: tab.url,
     kind,
+    summary,
     created_at: new Date().toISOString(),
     source: 'arc',
     mode,
-    content: mode === 'single' ? await grabContent(tab.id) : '',
+    content,
   };
 }
 
-async function saveCurrentTab(kind) {
+// ---------- 预览面板 ----------
+
+const KIND_KEY = 'lastKind';
+
+async function getLastKind() {
+  const { lastKind } = await chrome.storage.local.get('lastKind');
+  return lastKind || 'readlater';
+}
+
+async function inPage(tabId, func, args = []) {
+  const [result] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
+  return result?.result;
+}
+
+/**
+ * Extract → summarize → show the result → save what's approved.
+ *
+ * The summary happens before the write, not after, because seeing what got
+ * captured is what makes closing the tab feel safe. Nothing reaches the vault
+ * until it's confirmed.
+ */
+async function reviewAndSave() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !isValidUrl(tab.url)) return showError('这个页面不能保存');
 
+  let panelUp = false;
   try {
-    const result = await sendLinks(await payloadFor(tab, kind));
-    showSaveResult(result, kind);
+    // Restricted pages (chrome://, the web store) refuse injection — fall back
+    // to saving without review rather than failing outright.
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['panel.js'] });
+      await inPage(tab.id, (t) => nodiaPanelOpen(t), ['正在抓取正文…']);
+      panelUp = true;
+    } catch (e) {
+      panelUp = false;
+    }
+
+    const content = await grabContent(tab.id);
+    if (panelUp) {
+      await inPage(tab.id, (t) => nodiaPanelStatus(t), ['正在生成摘要…']);
+    }
+
+    const preview = await api('/api/preview', {
+      method: 'POST',
+      body: payloadFor(tab, await getLastKind(), { content }),
+    });
+
+    if (!panelUp) {
+      // No panel to confirm in; save straight away so the page isn't lost.
+      const kind = await getLastKind();
+      showSaveResult(await sendLinks(payloadFor(tab, kind, { summary: preview.summary || '' })), kind);
+      return setIcon('saved');
+    }
+
+    const decision = await inPage(tab.id, (p) => nodiaPanelDecide(p), [{
+      title: preview.title || tab.title || '',
+      summary: preview.summary || '',
+      reason: preview.reason || '',
+      existsIn: preview.exists_in || '',
+      defaultKind: await getLastKind(),
+    }]);
+
+    if (!decision || decision.action !== 'save') return;
+
+    await chrome.storage.local.set({ [KIND_KEY]: decision.kind });
+    const result = await sendLinks(
+      payloadFor(tab, decision.kind, { summary: decision.summary || '' }),
+    );
+    showSaveResult(result, decision.kind);
     setIcon('saved');
   } catch (error) {
+    if (panelUp) {
+      await inPage(tab.id, () => {
+        window.__nodiaPanel?.host.remove();
+        delete window.__nodiaPanel;
+      }).catch(() => {});
+    }
     showError(error.message || '保存失败');
     setIcon('error');
   }
+}
+
+/// Right-click path: no panel, but still summarized — the kind is already
+/// explicit, so there is nothing left to confirm.
+async function saveDirectly(tab, kind) {
+  const content = await grabContent(tab.id);
+  let summary = '';
+  try {
+    const preview = await api('/api/preview', {
+      method: 'POST',
+      body: payloadFor(tab, kind, { content }),
+    });
+    summary = preview.summary || '';
+  } catch (e) {
+    // A failed summary must not block the save.
+  }
+  const result = await sendLinks(payloadFor(tab, kind, { summary }));
+  await chrome.storage.local.set({ [KIND_KEY]: kind });
+  showSaveResult(result, kind);
+  setIcon('saved');
 }
 
 async function saveWindowTabs(kind) {
@@ -149,8 +238,9 @@ async function saveWindowTabs(kind) {
   if (!tabs.length) return showError('没有可保存的标签页');
 
   // Bulk saves skip text extraction: injecting into every open tab is exactly
-  // the kind of sweeping this extension refuses to do.
-  const payload = await Promise.all(tabs.map(t => payloadFor(t, kind, 'window')));
+  // the kind of sweeping this extension refuses to do. No text means no
+  // summary — the trade for not touching pages you didn't ask about.
+  const payload = tabs.map(t => payloadFor(t, kind, { mode: 'window' }));
   try {
     showSaveResult(await sendLinks(payload), kind);
     const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -267,10 +357,10 @@ function injectToast(message, type) {
 
 // ---------- 事件 ----------
 
-// Clicking the icon stays a single keystroke-free action: save as readlater,
-// the biggest and least committal bucket. The other two kinds are one
-// right-click away — deliberately, so the common case never asks a question.
-chrome.action.onClicked.addListener(() => saveCurrentTab('readlater'));
+// Clicking the icon opens the review panel: summary first, then you pick the
+// kind and confirm. The extra step is the point — an unreviewed save is one
+// you won't trust enough to close the tab on.
+chrome.action.onClicked.addListener(() => reviewAndSave());
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   updateIconForTab(await chrome.tabs.get(tabId));
@@ -291,9 +381,11 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     const items = [
-      ['save-readlater', '存为稍后读', ['page', 'link', 'selection']],
-      ['save-bookmark', '存为书签', ['page', 'link', 'selection']],
-      ['save-todo', '存为待办', ['page', 'link', 'selection']],
+      // Right-click already names the kind, so these skip the panel — still
+      // summarized, just nothing left to confirm.
+      ['save-readlater', '直接存为稍后读', ['page', 'link', 'selection']],
+      ['save-bookmark', '直接存为书签', ['page', 'link', 'selection']],
+      ['save-todo', '直接存为待办', ['page', 'link', 'selection']],
       ['save-window', '保存窗口内全部标签（稍后读）', ['action']],
       ['open-settings', '设置…', ['action']],
     ];
@@ -322,19 +414,21 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   const isCurrentPage = !info.linkUrl && tab && tab.url === url;
   try {
-    const payload = isCurrentPage
-      ? await payloadFor(tab, kind)
-      : {
-          title: info.linkText || tab?.title || '',
-          url,
-          kind,
-          created_at: new Date().toISOString(),
-          source: 'arc',
-          mode: 'single',
-          content: '',
-        };
-    showSaveResult(await sendLinks(payload), kind);
-    if (isCurrentPage) setIcon('saved');
+    if (isCurrentPage) {
+      await saveDirectly(tab, kind);
+    } else {
+      // A link on the page, not the page itself — nothing to extract.
+      showSaveResult(await sendLinks({
+        title: info.linkText || tab?.title || '',
+        url,
+        kind,
+        summary: '',
+        created_at: new Date().toISOString(),
+        source: 'arc',
+        mode: 'single',
+        content: '',
+      }), kind);
+    }
   } catch (error) {
     showError(error.message || '保存失败');
   }

@@ -27,13 +27,14 @@ final class VaultService {
             let store = try VaultStore(vaultRoot: settings.vaultURL)
             self.store = store
 
-            let api = VaultAPI(store: store) { [weak self] links in
-                self?.summarize(links, store: store)
+            let api = VaultAPI(store: store) { [weak self] title, url, content, done in
+                self?.preview(title: title, url: url, content: content, done: done)
+                    ?? done(VaultAPI.Preview(summary: nil, reason: "服务未就绪"))
             }
             let server = LocalHTTPServer(
                 port: UInt16(settings.port),
                 tokenProvider: { [weak settings] in settings?.token ?? "" },
-                handler: { api.handle($0) }
+                handler: { request, completion in api.handle(request, completion: completion) }
             )
             try server.start()
             self.server = server
@@ -55,18 +56,36 @@ final class VaultService {
         DispatchQueue.main.async { [weak settings] in settings?.status = text }
     }
 
-    /// Page text exists only for this call: it is never written to the vault
-    /// and is dropped as soon as a summary comes back (or doesn't).
-    private func summarize(_ links: [VaultLink], store: VaultStore) {
+    /// Summarizes for the review panel. Page text exists only for this call —
+    /// it is never written to the vault, and is dropped as soon as a summary
+    /// comes back (or doesn't).
+    ///
+    /// The summary now happens *before* saving rather than after: the extension
+    /// shows it, and only what you approve reaches disk.
+    private func preview(
+        title: String,
+        url: String,
+        content: String,
+        done: @escaping @Sendable (VaultAPI.Preview) -> Void
+    ) {
         let summarizer = Summarizer(config: settings.summarizer)
-        Task.detached(priority: .background) {
-            for link in links {
-                guard let summary = await summarizer.summarize(
-                    title: link.title, url: link.url, content: link.content ?? ""
-                ) else { continue }
-                if store.updateSummary(url: link.url, summary: summary) {
-                    Log.write("vault: summarized \(link.url)")
-                }
+
+        // Routing decides whether the text may leave this machine at all, and
+        // says so in words the panel can show.
+        if case .skip(let reason) = summarizer.route(for: url) {
+            return done(VaultAPI.Preview(summary: nil, reason: reason))
+        }
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return done(VaultAPI.Preview(summary: nil, reason: "没抓到正文"))
+        }
+
+        Task.detached(priority: .userInitiated) {
+            if let summary = await summarizer.summarize(
+                title: title, url: url, content: content
+            ) {
+                done(VaultAPI.Preview(summary: summary, reason: nil))
+            } else {
+                done(VaultAPI.Preview(summary: nil, reason: "摘要请求失败，详见 ~/Library/Logs/nodia.log"))
             }
         }
     }

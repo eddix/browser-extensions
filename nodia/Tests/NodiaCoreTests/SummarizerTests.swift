@@ -158,6 +158,43 @@ final class SummarizerTests: XCTestCase {
         XCTAssertNil(b["temperature"], "Anthropic 请求不得带 temperature")
     }
 
+    // MARK: - URL completion
+
+    /// Gateways publish a base URL, so that's what gets pasted; posting to the
+    /// bare base returns an auth error that sends you debugging the key.
+    func testCompletesBaseURLForAnthropic() {
+        let u = Summarizer.resolvedURL("https://ark.example.com/api/coding", wire: .anthropic)
+        XCTAssertEqual(u?.absoluteString, "https://ark.example.com/api/coding/v1/messages")
+    }
+
+    func testCompletesBaseURLForOpenAI() {
+        let u = Summarizer.resolvedURL("https://ark.example.com/api/v3", wire: .openai)
+        XCTAssertEqual(u?.absoluteString, "https://ark.example.com/api/v3/chat/completions")
+    }
+
+    func testLeavesCompleteURLAlone() {
+        let a = Summarizer.resolvedURL("https://x.com/v1/messages", wire: .anthropic)
+        XCTAssertEqual(a?.absoluteString, "https://x.com/v1/messages")
+        let o = Summarizer.resolvedURL("https://x.com/v1/chat/completions", wire: .openai)
+        XCTAssertEqual(o?.absoluteString, "https://x.com/v1/chat/completions")
+    }
+
+    /// A base ending in /v1 needs only the verb appended, not a second /v1.
+    func testDoesNotDoubleVersionSegment() {
+        let a = Summarizer.resolvedURL("https://x.com/v1", wire: .anthropic)
+        XCTAssertEqual(a?.absoluteString, "https://x.com/v1/messages")
+        let o = Summarizer.resolvedURL("https://x.com/v1/", wire: .openai)
+        XCTAssertEqual(o?.absoluteString, "https://x.com/v1/chat/completions")
+    }
+
+    func testTrailingSlashAndBlankHandling() {
+        XCTAssertEqual(
+            Summarizer.resolvedURL("https://x.com/api/  ", wire: .anthropic)?.absoluteString,
+            "https://x.com/api/v1/messages"
+        )
+        XCTAssertNil(Summarizer.resolvedURL("   ", wire: .anthropic))
+    }
+
     // MARK: - Response parsing
 
     func testParsesOpenAIResponse() {

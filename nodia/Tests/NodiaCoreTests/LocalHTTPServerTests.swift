@@ -10,9 +10,9 @@ final class LocalHTTPServerTests: XCTestCase {
 
     override func setUpWithError() throws {
         port = UInt16.random(in: 24000...24999)
-        server = LocalHTTPServer(port: port, tokenProvider: { self.token }) { request in
-            .ok(["path": request.path, "method": request.method,
-                 "body": String(data: request.body, encoding: .utf8) ?? ""])
+        server = LocalHTTPServer(port: port, tokenProvider: { self.token }) { request, done in
+            done(.ok(["path": request.path, "method": request.method,
+                      "body": String(data: request.body, encoding: .utf8) ?? ""]))
         }
         try server.start()
         // Give the listener a moment to reach .ready

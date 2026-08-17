@@ -23,12 +23,18 @@ final class VaultAPIEndToEndTests: XCTestCase {
 
         let captured = Captured()
         self.captured = captured
-        let api = VaultAPI(store: store) { links in
-            captured.append(links.compactMap { $0.content })
+        // Stand-in summarizer: records the page text it was handed and returns
+        // a fixed summary, so the route can be tested without a model.
+        let api = VaultAPI(store: store) { _, _, content, done in
+            captured.append([content])
+            done(VaultAPI.Preview(summary: content.isEmpty ? nil : "摘要：\(content)",
+                                  reason: content.isEmpty ? "没抓到正文" : nil))
         }
 
         port = UInt16.random(in: 25000...25999)
-        server = LocalHTTPServer(port: port, tokenProvider: { self.token }) { api.handle($0) }
+        server = LocalHTTPServer(port: port, tokenProvider: { self.token }) { req, done in
+            api.handle(req, completion: done)
+        }
         try server.start()
 
         let ready = expectation(description: "listening")
@@ -97,7 +103,9 @@ final class VaultAPIEndToEndTests: XCTestCase {
 
         // Page text must never be written to the vault — it only feeds the summary.
         XCTAssertFalse(text.contains("正文若干"), "正文不得写入收藏库")
-        XCTAssertEqual(captured.all, ["正文若干"], "正文应交给摘要回调")
+        // Saving no longer summarizes: that happened at /api/preview, and the
+        // approved text arrives on the payload. A save must not call a model.
+        XCTAssertEqual(captured.all, [], "保存阶段不应再触发摘要")
 
         // The extension asks this on every tab switch to color its icon.
         let check = try send("/api/check-url?url=https%3A%2F%2Fwiki.example.com%2Fwiki%2FABC")
@@ -107,6 +115,55 @@ final class VaultAPIEndToEndTests: XCTestCase {
         let again = try send("/api/links", method: "POST", body: payload)
         XCTAssertTrue(again.body.contains("\"saved\":0"), again.body)
         XCTAssertTrue(again.body.contains("links-"), again.body)
+    }
+
+    // MARK: - Preview before save
+
+    /// The review step: summarize and hand the text back, writing nothing.
+    /// Seeing what got captured is what makes closing the tab feel safe, so
+    /// this must not touch the vault.
+    func testPreviewReturnsSummaryWithoutWritingAnything() throws {
+        let payload = Data("""
+        {"title":"某文档","url":"https://example.com/p","content":"正文若干"}
+        """.utf8)
+
+        let r = try send("/api/preview", method: "POST", body: payload)
+        XCTAssertEqual(r.status, 200)
+        XCTAssertTrue(r.body.contains("摘要：正文若干"), r.body)
+        XCTAssertEqual(captured.all, ["正文若干"], "正文应交给摘要器")
+
+        XCTAssertEqual(store.allEntries().count, 0, "预览不得写入任何内容")
+        XCTAssertTrue(todayInboxText().isEmpty)
+    }
+
+    /// A page already in the vault is flagged in the panel, so a duplicate is
+    /// visible before saving rather than reported after.
+    func testPreviewReportsAnExistingEntry() throws {
+        _ = store.save([VaultLink(title: "旧的", url: "https://example.com/dup")])
+
+        let payload = Data(#"{"title":"新的","url":"https://example.com/dup","content":"x"}"#.utf8)
+        let r = try send("/api/preview", method: "POST", body: payload)
+        XCTAssertTrue(r.body.contains("exists_in"), r.body)
+        XCTAssertFalse(r.body.contains("\"exists_in\":null"), r.body)
+    }
+
+    /// No summary must still be a usable outcome: the reason is shown and the
+    /// save buttons stay live — a link with no summary beats no link.
+    func testPreviewExplainsWhyThereIsNoSummary() throws {
+        let payload = Data(#"{"title":"T","url":"https://example.com/q","content":""}"#.utf8)
+        let r = try send("/api/preview", method: "POST", body: payload)
+        XCTAssertEqual(r.status, 200)
+        XCTAssertTrue(r.body.contains("没抓到正文"), r.body)
+    }
+
+    /// The approved summary rides along with the save and lands verbatim —
+    /// including edits made in the panel.
+    func testApprovedSummaryIsWrittenAsGiven() throws {
+        let payload = Data("""
+        {"title":"T","url":"https://example.com/s","kind":"bookmark","summary":"我改过的摘要"}
+        """.utf8)
+        XCTAssertEqual(try send("/api/links", method: "POST", body: payload).status, 200)
+        XCTAssertTrue(todayInboxText().contains("- summary: 我改过的摘要"), todayInboxText())
     }
 
     func testTodoLandsInItsOwnFileAsACheckbox() throws {
