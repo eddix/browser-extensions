@@ -197,8 +197,10 @@ struct SettingsView: View {
 
             Section("透明度") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("面板不透明度 \(Int(themeStore.theme.opacity * 100))%")
-                    Slider(value: $themeStore.theme.opacity, in: 0.6...1.0, step: 0.05)
+                    // Rounded, not truncated: at 1% steps a stored 0.869999
+                    // would otherwise read as 86%.
+                    Text("面板不透明度 \(Int((themeStore.theme.opacity * 100).rounded()))%")
+                    Slider(value: $themeStore.theme.opacity, in: Theme.opacityRange, step: 0.01)
                     Text("下次打开面板时生效。略微透光会让它更像浮层，而不是一扇盖住屏幕的窗。")
                         .font(.caption).foregroundStyle(.secondary)
                 }

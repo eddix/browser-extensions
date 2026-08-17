@@ -10,6 +10,12 @@ struct Theme: Codable, Equatable {
     /// an overlay rather than a window that took over the screen.
     var opacity: Double
 
+    /// The range worth offering. Below about 90% the text starts competing
+    /// with whatever is behind it, so the settings that were actually usable
+    /// occupied the top sliver of the old 60–100% slider — which put every
+    /// meaningful choice within two notches of the end.
+    static let opacityRange: ClosedRange<Double> = 0.85...1.0
+
     static let `default` = Theme(
         paletteID: "system", fontID: "system", baseSize: 13, opacity: 0.90
     )
@@ -27,7 +33,11 @@ struct Theme: Codable, Equatable {
         paletteID = try c.decodeIfPresent(String.self, forKey: .paletteID) ?? "system"
         fontID = try c.decodeIfPresent(String.self, forKey: .fontID) ?? "system"
         baseSize = try c.decodeIfPresent(Double.self, forKey: .baseSize) ?? 13
-        opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 0.90
+        // Clamped: a value saved while the slider still went down to 60% would
+        // otherwise sit outside its own control, where the knob pins to one end
+        // and stops agreeing with the number beside it.
+        let saved = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 0.90
+        opacity = min(max(saved, Theme.opacityRange.lowerBound), Theme.opacityRange.upperBound)
     }
 }
 
