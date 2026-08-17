@@ -3,18 +3,23 @@ import Foundation
 /// A "platform + parameters" jump: one entry that stands in for every URL you
 /// can reach by swapping a value.
 ///
-/// Internal platforms encode the same three things over and over — the region
-/// in the hostname, the feature in the path, the target in the query:
+/// Internal platforms encode the same three things over and over — the site in
+/// the hostname, the feature in the path, the target in the query:
 ///
-///     https://console-{region}.example.com/metrics/overview/server_overview?service={service}
-///            └──┬───┘                     └──────────┬──────────┘        └──┬──┘
-///             region                             feature                  target
+///     https://{site}/metrics/overview/server_overview?service={service}
+///             └─┬──┘ └──────────┬──────────┘        └──┬──┘
+///              site          feature                 target
 ///
 /// Without this, each combination has to be saved separately — which is why
 /// the same monitoring console ends up bookmarked once per region.
+///
+/// Parameterize the **whole** host rather than a prefix of it: regions don't
+/// reliably share a domain (`console-i18n.example.com` but
+/// `console-eu.example.net`), so `console-{region}.example.com` builds
+/// hostnames that don't resolve.
 public struct JumpTemplate: Sendable, Equatable {
     public let name: String
-    /// URL with `{placeholder}` markers, e.g. `https://cloud-{region}.../x?service={service}`
+    /// URL with `{placeholder}` markers, e.g. `https://{site}/x?service={service}`
     public let urlTemplate: String
     /// Known values per placeholder. A placeholder with no list is free input.
     public let choices: [String: [String]]
@@ -70,7 +75,7 @@ public struct JumpTemplate: Sendable, Equatable {
 
     /// Percent-encodes only what would actually break a URL.
     ///
-    /// Values land in hostnames as often as in query strings (`cloud-{region}`),
+    /// Values land in hostnames as often as in query strings (`{site}`),
     /// and blanket query-encoding would corrupt a host. Everything a service,
     /// region, or time window is made of passes through untouched.
     static func encode(_ value: String) -> String {
@@ -155,21 +160,38 @@ public struct JumpStore: Sendable {
 
     /// Written on first run so the format is discoverable by example rather
     /// than by reading docs. Seeded from patterns actually present in the
-    /// vault: region in the host, service in the query.
+    /// vault: site in the host, namespace or service as the target.
     public static func starterFile() -> String {
         """
         ---
         type: nodia-jumps
         ---
 
-        <!-- nodia 跳转模板。⌘⇧K 里搜名字即可，{参数} 会逐个让你填。
-             同名的字段提供候选值（逗号分隔），没有候选的参数为自由输入。 -->
+        <!-- nodia 跳转模板。⌘T 浏览全部，或 ⌘⇧K 直接搜名字，{参数} 会逐个让你填。
+             同名的字段提供候选值（逗号分隔），没有候选的参数为自由输入。
+             站点整体写成 {site} 而不是 console-{region}.example.com——不同区域
+             可能位于完全不同的域名（EU 在 example.net 上）。 -->
 
         - Metrics 服务大盘
-          - url: https://console-{region}.example.com/metrics/overview/server_overview?service={service}&from={window}
-          - region: i18n, us, eu
+          - url: https://{site}/metrics/overview/server_overview?service={service}&from={window}
+          - site: console-i18n.example.com, console-us.example.com, console-eu.example.net
           - window: now-1h, now-6h, now-24h, now-7d
           - keywords: metrics, 服务大盘, 监控, service
+          - note: 看某个 service 的服务监控总览
+
+        - ConfigHub 配置
+          - url: https://{site}/confighub/namespace/{namespace}?env={env}&dir_path=all_dir&region=all_region&scope=all&tab=config
+          - site: console-i18n.example.com, console-us.example.com, console-eu.example.net, console-staging.example.com
+          - env: prod, ppe, staging
+          - keywords: confighub, 配置, 配置中心, namespace, 动态配置
+          - note: 某个 namespace 的配置列表
+
+        - ConfigHub 变更历史
+          - url: https://{site}/confighub/namespace/{namespace}?scope=history&env={env}&release_status=running&region=all_region&rn=10
+          - site: console-i18n.example.com, console-us.example.com, console-eu.example.net, console-staging.example.com
+          - env: prod, ppe, staging
+          - keywords: confighub, 变更, 历史, 发布记录, 回滚
+          - note: 谁改的、改了什么、能否回滚
 
         - Pipeline 任务节点
           - url: https://pipeline-{region}.example.net/pipeline/development/node/{node}?project={project}&version=-1

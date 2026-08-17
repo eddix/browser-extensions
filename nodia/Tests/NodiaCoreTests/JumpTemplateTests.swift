@@ -111,10 +111,14 @@ final class JumpTemplateTests: XCTestCase {
     /// The starter file is the format's documentation — it has to parse.
     func testStarterFileParses() {
         let templates = JumpStore.parse(JumpStore.starterFile())
-        XCTAssertEqual(templates.count, 3)
+        XCTAssertEqual(templates.count, 5)
         let metrics = templates.first { $0.name.contains("Metrics") }
-        XCTAssertEqual(metrics?.parameters, ["region", "service", "window"])
-        XCTAssertEqual(metrics?.options(for: "region"), ["i18n", "us", "eu"])
+        XCTAssertEqual(metrics?.parameters, ["site", "service", "window"])
+        // Every candidate site must be a complete host, since regions don't
+        // share a domain.
+        for site in metrics?.options(for: "site") ?? [] {
+            XCTAssertTrue(site.contains("."), "站点候选值应是完整域名：\(site)")
+        }
 
         // Every starter template must actually expand to a valid URL.
         for t in templates {
@@ -135,5 +139,45 @@ final class JumpTemplateTests: XCTestCase {
         """).first
         let url = try XCTUnwrap(t?.expand(["suffix": ".example.net"]))
         XCTAssertEqual(url.host, "ledger.example.net")
+    }
+
+    // MARK: - Host shape
+
+    /// The trap this caught in real data: not every region shares a domain.
+    /// `console-{region}.example.com` with region "eu" builds a hostname that
+    /// doesn't exist — the EU console lives on example.net. The whole host
+    /// has to be the parameter, not a prefix of it.
+    func testWholeHostAsParameterSupportsDifferentDomains() throws {
+        let t = JumpStore.parse("""
+        - ConfigHub 配置
+          - url: https://{site}/confighub/namespace/{namespace}?env={env}
+          - site: console-i18n.example.com, console-eu.example.net
+          - env: prod, ppe
+        """).first
+        let template = try XCTUnwrap(t)
+
+        let i18n = try XCTUnwrap(template.expand([
+            "site": "console-i18n.example.com", "namespace": "team.arch.demo", "env": "prod",
+        ]))
+        XCTAssertEqual(i18n.host, "console-i18n.example.com")
+
+        let eu = try XCTUnwrap(template.expand([
+            "site": "console-eu.example.net", "namespace": "team.arch.demo", "env": "prod",
+        ]))
+        XCTAssertEqual(eu.host, "console-eu.example.net",
+                       "不同区域可能位于完全不同的域名，站点须整体参数化")
+    }
+
+    /// A namespace is dotted; encoding those dots would break the path.
+    func testDottedNamespaceSurvivesExpansion() throws {
+        let t = try XCTUnwrap(JumpStore.parse("""
+        - ConfigHub
+          - url: https://{site}/confighub/namespace/{namespace}
+          - site: console-i18n.example.com
+        """).first)
+        let url = try XCTUnwrap(t.expand([
+            "site": "console-i18n.example.com", "namespace": "team.arch.sdk_config",
+        ]))
+        XCTAssertEqual(url.path, "/confighub/namespace/team.arch.sdk_config")
     }
 }

@@ -77,6 +77,21 @@ do {
         )
     }
 
+    // Expand each template with its first candidate, so a broken URL is
+    // visible here rather than discovered by a browser 404.
+    print("\n🧪 模板展开自检:")
+    for t in jumps {
+        let values = Dictionary(uniqueKeysWithValues: t.parameters.map {
+            ($0, t.options(for: $0).first ?? "<\($0)>")
+        })
+        if let url = t.expand(values) {
+            print("  ✅ \(t.name)")
+            print("       \(url.absoluteString)")
+        } else {
+            print("  ❌ \(t.name) — 无法展开（参数：\(t.parameters.joined(separator: ", "))）")
+        }
+    }
+
     let probeQuery = ProcessInfo.processInfo.environment["NODIA_QUERY"] ?? "metrics"
     let vaultRows: [TabEntry] = (try? VaultStore(vaultRoot: URL(fileURLWithPath: vaultPath)))
         .map { store in

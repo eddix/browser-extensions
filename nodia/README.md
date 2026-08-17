@@ -114,9 +114,9 @@ Internal platforms encode the same three things over and over — the region in
 the hostname, the feature in the path, the target in the query:
 
 ```
-https://console-{region}.example.com/metrics/overview/server_overview?service={service}
-       └──┬───┘                     └──────────┬──────────┘        └──┬──┘
-        region                             feature                  target
+https://{site}/confighub/namespace/{namespace}?env={env}
+        └─┬──┘ └──────┬─────┘            └──┬──┘
+         site      feature               target
 ```
 
 Without a way to express that, each combination has to be saved separately —
