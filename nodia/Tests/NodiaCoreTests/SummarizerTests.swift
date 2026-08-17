@@ -103,4 +103,107 @@ final class SummarizerTests: XCTestCase {
         let s = Summarizer(config: config())
         XCTAssertEqual(s.route(for: "https://wiki.example.cn/wiki/x"), .intranet)
     }
+
+    // MARK: - Wire formats
+
+    private func body(_ request: URLRequest) throws -> [String: Any] {
+        let data = try XCTUnwrap(request.httpBody)
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func request(_ wire: WireProtocol) -> URLRequest {
+        Summarizer.buildRequest(
+            endpoint: Summarizer.Endpoint(
+                url: "https://gw.example/x", model: "some-model",
+                keyAccount: "acct", wire: wire
+            ),
+            key: "secret-key",
+            url: URL(string: "https://gw.example/x")!,
+            title: "标题", content: "正文"
+        )
+    }
+
+    func testOpenAIRequestShape() throws {
+        let r = request(.openai)
+        XCTAssertEqual(r.value(forHTTPHeaderField: "Authorization"), "Bearer secret-key")
+        XCTAssertNil(r.value(forHTTPHeaderField: "x-api-key"))
+
+        let b = try body(r)
+        let messages = try XCTUnwrap(b["messages"] as? [[String: String]])
+        XCTAssertEqual(messages.first?["role"], "system", "OpenAI 的 system 是一条消息")
+        XCTAssertNil(b["system"], "OpenAI 没有顶层 system 字段")
+        XCTAssertNotNil(b["temperature"])
+    }
+
+    /// Anthropic authenticates with `x-api-key` and rejects requests with no
+    /// version header — a bearer token alone gets a 401.
+    func testAnthropicUsesApiKeyAndVersionHeaders() throws {
+        let r = request(.anthropic)
+        XCTAssertEqual(r.value(forHTTPHeaderField: "x-api-key"), "secret-key")
+        XCTAssertEqual(r.value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
+        XCTAssertNil(r.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testAnthropicBodyShape() throws {
+        let b = try body(request(.anthropic))
+        XCTAssertEqual(b["system"] as? String, Summarizer.instruction,
+                       "Anthropic 的 system 是顶层字段，不是消息")
+        XCTAssertNotNil(b["max_tokens"], "Anthropic 的 max_tokens 是必填")
+
+        let messages = try XCTUnwrap(b["messages"] as? [[String: String]])
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertEqual(messages.first?["role"], "user")
+
+        // Current Claude models reject temperature with a 400.
+        XCTAssertNil(b["temperature"], "Anthropic 请求不得带 temperature")
+    }
+
+    // MARK: - Response parsing
+
+    func testParsesOpenAIResponse() {
+        let json = Data(#"{"choices":[{"message":{"content":"一句话摘要"}}]}"#.utf8)
+        XCTAssertEqual(Summarizer.extractText(wire: .openai, data: json), "一句话摘要")
+    }
+
+    /// The critical one: `content` is a block array, and on a thinking-capable
+    /// model the reasoning block comes first. Indexing content[0] yields empty
+    /// text — blocks have to be filtered by type.
+    func testParsesAnthropicResponseWithLeadingThinkingBlock() {
+        let json = Data("""
+        {"stop_reason":"end_turn","content":[
+          {"type":"thinking","thinking":""},
+          {"type":"text","text":"一句话摘要"}
+        ]}
+        """.utf8)
+        XCTAssertEqual(Summarizer.extractText(wire: .anthropic, data: json), "一句话摘要")
+    }
+
+    func testJoinsMultipleAnthropicTextBlocks() {
+        let json = Data("""
+        {"content":[{"type":"text","text":"前半"},{"type":"text","text":"后半"}]}
+        """.utf8)
+        XCTAssertEqual(Summarizer.extractText(wire: .anthropic, data: json), "前半后半")
+    }
+
+    /// A policy decline is HTTP 200 with an empty content array — a normal
+    /// response that must not be mistaken for a summary or an error.
+    func testAnthropicRefusalYieldsNoSummary() {
+        let json = Data(#"{"stop_reason":"refusal","content":[]}"#.utf8)
+        XCTAssertNil(Summarizer.extractText(wire: .anthropic, data: json))
+    }
+
+    func testMismatchedShapeYieldsNil() {
+        let openAIShaped = Data(#"{"choices":[{"message":{"content":"x"}}]}"#.utf8)
+        XCTAssertNil(Summarizer.extractText(wire: .anthropic, data: openAIShaped),
+                     "协议选错时应返回 nil，而不是崩溃或写入垃圾摘要")
+    }
+
+    /// Settings saved before the protocol picker existed decode without the
+    /// field; they must keep working as OpenAI rather than failing to load.
+    func testEndpointWithoutWireFieldDecodesAsOpenAI() throws {
+        let legacy = Data(#"{"url":"https://x/y","model":"m","keyAccount":"llm.public"}"#.utf8)
+        let decoded = try JSONDecoder().decode(Summarizer.Endpoint.self, from: legacy)
+        XCTAssertEqual(decoded.wire, .openai)
+        XCTAssertEqual(decoded.model, "m")
+    }
 }

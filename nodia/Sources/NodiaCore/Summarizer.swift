@@ -13,21 +13,57 @@ import Foundation
 /// If the matching endpoint isn't configured, the text is **not sent anywhere**
 /// and the entry is simply saved without a summary. Failing closed is the only
 /// safe default: a missing summary costs nothing, a leak can't be undone.
+/// Wire format of an LLM endpoint. Gateways commonly speak one or both; the
+/// two differ in more than the URL, so it has to be an explicit choice.
+public enum WireProtocol: String, Codable, Sendable, CaseIterable {
+    /// `POST /v1/chat/completions` — `Authorization: Bearer`, text at
+    /// `choices[0].message.content`.
+    case openai
+    /// `POST /v1/messages` — `x-api-key` + `anthropic-version`, `max_tokens`
+    /// required, text spread across a `content` block array.
+    case anthropic
+
+    public var label: String {
+        switch self {
+        case .openai: return "OpenAI 兼容"
+        case .anthropic: return "Anthropic 兼容"
+        }
+    }
+}
+
 public struct Summarizer: Sendable {
 
     public struct Endpoint: Codable, Sendable, Equatable {
-        /// OpenAI-compatible chat completions URL, e.g. `.../v1/chat/completions`.
+        /// Full request URL — `.../v1/chat/completions` for OpenAI,
+        /// `.../v1/messages` for Anthropic.
         public var url: String
         public var model: String
         /// Keychain account holding the API key; never the key itself.
         public var keyAccount: String
+        public var wire: WireProtocol
 
         public var isConfigured: Bool { !url.isEmpty && !model.isEmpty }
 
-        public init(url: String = "", model: String = "", keyAccount: String) {
+        public init(
+            url: String = "",
+            model: String = "",
+            keyAccount: String,
+            wire: WireProtocol = .openai
+        ) {
             self.url = url
             self.model = model
             self.keyAccount = keyAccount
+            self.wire = wire
+        }
+
+        // `wire` was added after the first release; settings saved before that
+        // decode without it, so it needs a default rather than a hard failure.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+            model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+            keyAccount = try c.decode(String.self, forKey: .keyAccount)
+            wire = try c.decodeIfPresent(WireProtocol.self, forKey: .wire) ?? .openai
         }
     }
 
@@ -109,44 +145,26 @@ public struct Summarizer: Sendable {
         guard let requestURL = URL(string: endpoint.url) else { return nil }
         let key = SecretStore.get(endpoint.keyAccount) ?? ""
 
-        let prompt = """
-        用一句中文概括这个网页的内容，不超过 60 字，直接给结论，不要以「这篇文章」开头。
-
-        标题：\(title)
-
-        正文：
-        \(content.prefix(6000))
-        """
-
-        let body: [String: Any] = [
-            "model": endpoint.model,
-            "messages": [["role": "user", "content": prompt]],
-            "max_tokens": 200,
-            "temperature": 0.3,
-        ]
-
-        var request = URLRequest(url: requestURL)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 30
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !key.isEmpty {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        let request = Self.buildRequest(
+            endpoint: endpoint,
+            key: key,
+            url: requestURL,
+            title: title,
+            content: String(content.prefix(6000))
+        )
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                Log.write("summary failed: HTTP \(code) for \(url)")
+                // The body carries the actual reason (bad model name, missing
+                // header, rejected parameter) — without it every failure looks
+                // the same.
+                let detail = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+                Log.write("summary failed: HTTP \(code) for \(url) — \(detail)")
                 return nil
             }
-            guard
-                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let choices = json["choices"] as? [[String: Any]],
-                let message = choices.first?["message"] as? [String: Any],
-                let text = message["content"] as? String
-            else {
+            guard let text = Self.extractText(wire: endpoint.wire, data: data) else {
                 Log.write("summary failed: unexpected response shape for \(url)")
                 return nil
             }
@@ -159,6 +177,101 @@ public struct Summarizer: Sendable {
         } catch {
             Log.write("summary failed: \(error.localizedDescription)")
             return nil
+        }
+    }
+
+    // MARK: - Wire format
+
+    static let instruction =
+        "用一句中文概括这个网页的内容，不超过 60 字，直接给结论，不要以「这篇文章」开头。"
+
+    /// Generous relative to a 60-character answer: on a thinking-capable model
+    /// `max_tokens` caps reasoning *and* reply together, so a tight budget can
+    /// be spent entirely on thinking and return nothing.
+    static let maxTokens = 1024
+
+    static func buildRequest(
+        endpoint: Endpoint,
+        key: String,
+        url: URL,
+        title: String,
+        content: String
+    ) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let userText = "标题：\(title)\n\n正文：\n\(content)"
+        let body: [String: Any]
+
+        switch endpoint.wire {
+        case .openai:
+            if !key.isEmpty {
+                request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            }
+            body = [
+                "model": endpoint.model,
+                "messages": [
+                    ["role": "system", "content": Self.instruction],
+                    ["role": "user", "content": userText],
+                ],
+                "max_tokens": Self.maxTokens,
+                "temperature": 0.3,
+            ]
+
+        case .anthropic:
+            // Anthropic authenticates with x-api-key, not a bearer token, and
+            // rejects requests without a version header.
+            if !key.isEmpty {
+                request.setValue(key, forHTTPHeaderField: "x-api-key")
+            }
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            // `system` is a top-level field here, not a message role, and
+            // `max_tokens` is required rather than optional. `temperature` is
+            // deliberately absent: current Claude models reject it with a 400.
+            body = [
+                "model": endpoint.model,
+                "max_tokens": Self.maxTokens,
+                "system": Self.instruction,
+                "messages": [["role": "user", "content": userText]],
+            ]
+        }
+
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    static func extractText(wire: WireProtocol, data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        switch wire {
+        case .openai:
+            guard
+                let choices = json["choices"] as? [[String: Any]],
+                let message = choices.first?["message"] as? [String: Any],
+                let text = message["content"] as? String
+            else { return nil }
+            return text
+
+        case .anthropic:
+            // A safety decline is HTTP 200 with an empty content array — it is
+            // a normal response, not an error, and must not be read as one.
+            if json["stop_reason"] as? String == "refusal" {
+                Log.write("summary refused by model policy")
+                return nil
+            }
+            // `content` is an array of blocks. On a thinking-capable model the
+            // first block is the reasoning, so blocks must be filtered by type
+            // rather than indexed — content[0].text is often empty.
+            guard let blocks = json["content"] as? [[String: Any]] else { return nil }
+            let text = blocks
+                .filter { $0["type"] as? String == "text" }
+                .compactMap { $0["text"] as? String }
+                .joined()
+            return text.isEmpty ? nil : text
         }
     }
 }

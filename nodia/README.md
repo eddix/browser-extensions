@@ -87,6 +87,20 @@ which the previous backend, with `allow_origin(Any)`, permitted.
 | Save endpoint | `127.0.0.1:8787`, token-authenticated |
 | Summaries | your own LLM endpoints, routed by host (intranet vs public) |
 
+Each summary endpoint speaks either wire format, selected per endpoint:
+
+| | OpenAI | Anthropic |
+|---|---|---|
+| Path | `/v1/chat/completions` | `/v1/messages` |
+| Auth | `Authorization: Bearer` | `x-api-key` + `anthropic-version` |
+| System prompt | a `role: "system"` message | top-level `system` field |
+| Reply text | `choices[0].message.content` | `content` blocks of `type: "text"` |
+
+The last row is the one that bites: `content` is an array, and on a
+thinking-capable model the reasoning block comes first — indexing `content[0]`
+returns empty text. `temperature` is also omitted on the Anthropic path, since
+current Claude models reject it outright.
+
 See [DESIGN.md](./DESIGN.md) for the tab-parsing details.
 
 ## Build & run

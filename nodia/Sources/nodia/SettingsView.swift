@@ -29,19 +29,13 @@ struct SettingsView: View {
             }
 
             Section("内网页面") {
-                endpointFields(
-                    endpoint: $vaultSettings.summarizer.intranet,
-                    placeholder: "https://…/v1/chat/completions"
-                )
+                endpointFields(endpoint: $vaultSettings.summarizer.intranet)
                 Text("匹配内网域名的页面只发往这里。**没配就不发**，宁可没有摘要——泄露无法撤回。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("公网页面") {
-                endpointFields(
-                    endpoint: $vaultSettings.summarizer.publicNet,
-                    placeholder: "https://api.openai.com/v1/chat/completions"
-                )
+                endpointFields(endpoint: $vaultSettings.summarizer.publicNet)
             }
 
             Section("内网域名") {
@@ -64,12 +58,19 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func endpointFields(
-        endpoint: Binding<Summarizer.Endpoint>,
-        placeholder: String
-    ) -> some View {
-        TextField("接口地址", text: endpoint.url, prompt: Text(placeholder))
-            .textFieldStyle(.roundedBorder)
+    private func endpointFields(endpoint: Binding<Summarizer.Endpoint>) -> some View {
+        Picker("协议", selection: endpoint.wire) {
+            ForEach(WireProtocol.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        TextField(
+            "接口地址",
+            text: endpoint.url,
+            prompt: Text(endpoint.wrappedValue.wire == .anthropic
+                         ? "https://…/v1/messages"
+                         : "https://…/v1/chat/completions")
+        )
+        .textFieldStyle(.roundedBorder)
         TextField("模型", text: endpoint.model, prompt: Text("model name"))
             .textFieldStyle(.roundedBorder)
         HStack {
