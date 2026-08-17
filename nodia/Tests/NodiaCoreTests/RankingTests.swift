@@ -62,4 +62,47 @@ final class RankingTests: XCTestCase {
         let top = try XCTUnwrap(FuzzyMatcher.rank(rows, query: "").first)
         XCTAssertEqual(top.title, "最近用过的")
     }
+
+    // MARK: - Space names are not searchable
+
+    /// A tab must not match just because it sits in a Space of that name.
+    /// Measured on a real sidebar, "ledger" pulled in 23 such tabs against 21
+    /// genuine ones — a performance-review doc among them.
+    func testTabDoesNotMatchItsSpaceName() {
+        let inLedgerSpace = TabEntry(
+            id: "t", title: "某人的绩效面谈记录 - 内部文档",
+            url: "https://wiki.example.com/wiki/abc",
+            spaceTitle: "Ledger", lastActiveAt: 100
+        )
+        XCTAssertTrue(FuzzyMatcher.rank([inLedgerSpace], query: "ledger").isEmpty,
+                      "仅因所在 Workspace 名而命中的标签不应出现")
+    }
+
+    /// The same field on a saved link holds its kind, which *is* worth
+    /// matching — searching 待办 should filter to todos.
+    func testSavedLinkStillMatchesItsKindLabel() throws {
+        let todo = TabEntry(
+            id: "v", title: "修 监控组件", url: "https://x.com/a",
+            spaceTitle: "待办", lastActiveAt: 0, origin: .vault
+        )
+        XCTAssertEqual(FuzzyMatcher.rank([todo], query: "待办").count, 1)
+    }
+
+    func testJumpTemplateStillMatchesItsTag() throws {
+        let jump = TabEntry(
+            id: "j", title: "Metrics 服务大盘", url: "https://x-{r}.com/a",
+            spaceTitle: "跳转", lastActiveAt: 0, origin: .jumpTemplate
+        )
+        XCTAssertEqual(FuzzyMatcher.rank([jump], query: "跳转").count, 1)
+    }
+
+    /// Excluding the Space name must not cost a real hit: a tab whose title or
+    /// URL genuinely contains the term still matches.
+    func testGenuineHitInsideThatSpaceStillMatches() {
+        let real = TabEntry(
+            id: "t2", title: "ledger 对账任务", url: "https://ledger.example.com/x",
+            spaceTitle: "Ledger", lastActiveAt: 100
+        )
+        XCTAssertEqual(FuzzyMatcher.rank([real], query: "ledger").count, 1)
+    }
 }

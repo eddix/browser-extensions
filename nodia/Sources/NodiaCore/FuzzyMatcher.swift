@@ -52,6 +52,7 @@ public enum FuzzyMatcher {
     public static func score(_ tab: TabEntry, query q: String, needle: [Character]) -> Int? {
         var best: Int?
         for (keyPath, weight) in fields {
+            if keyPath == \.spaceTitle && !matchesSpaceTitle(tab) { continue }
             let field = tab[keyPath: keyPath].lowercased()
             if let s = optimalScore(needle: needle, haystack: Array(field)) {
                 var bonus = field.contains(q) ? substringBonus : 0
@@ -69,12 +70,26 @@ public enum FuzzyMatcher {
             }
         }
         // Cross-field fallback (low weight) so multi-field queries still recall.
-        let combined = "\(tab.title) \(tab.host) \(tab.path) \(tab.spaceTitle) \(tab.note)"
+        let space = matchesSpaceTitle(tab) ? tab.spaceTitle : ""
+        let combined = "\(tab.title) \(tab.host) \(tab.path) \(space) \(tab.note)"
             .lowercased()
         if let s = optimalScore(needle: needle, haystack: Array(combined)) {
             best = max(best ?? Int.min, Int(Double(s) * 0.30))
         }
         return best
+    }
+
+    /// Whether this row's `spaceTitle` is worth matching.
+    ///
+    /// For a saved link or a jump it holds the kind (档案 / 待办 / 跳转) — a
+    /// useful filter. For an Arc tab it holds the Space name, which is pure
+    /// noise: measured on a real sidebar, searching "ledger" matched 23 tabs
+    /// solely because they sat in a Space of that name (against 21 genuine
+    /// hits), including a performance-review doc. Space names stopped
+    /// describing their contents long ago — in every Space but one, *no* tab's
+    /// title or URL mentions the name it lives under.
+    private static func matchesSpaceTitle(_ tab: TabEntry) -> Bool {
+        tab.origin != .arcTab
     }
 
     private static func originPriority(_ o: TabEntry.Origin) -> Int {
