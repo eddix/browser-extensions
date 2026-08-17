@@ -18,6 +18,11 @@ final class VaultService {
     var vaultStore: VaultStore? { store }
 
     func start() {
+        // Opening the vault can hang: if it sits under ~/Documents, macOS
+        // holds the first access until the privacy prompt is answered — and a
+        // menu-bar-only app may never show that prompt on its own. Say so,
+        // otherwise the settings window just reads "未启动" forever.
+        setStatus("正在打开收藏库…")
         do {
             let store = try VaultStore(vaultRoot: settings.vaultURL)
             self.store = store

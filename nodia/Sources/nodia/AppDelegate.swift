@@ -30,8 +30,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Receives saves from the browser extension, and feeds saved links
         // into search so a closed tab is still one ⌘⇧K away.
-        vault.start()
-        model.attachVault(vault.vaultStore)
+        //
+        // Off the main thread: the vault lives under ~/Documents, and the
+        // first touch there raises the system's privacy prompt, which blocks
+        // the calling thread until answered. On the main thread that freezes
+        // launch outright — no menu-bar icon, no hotkey.
+        let vault = self.vault           // instantiate the lazy var here, on main
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            vault.start()
+            DispatchQueue.main.async {
+                self?.model.attachVault(vault.vaultStore)
+            }
+        }
 
         // ⌘⇧K
         hotkey = GlobalHotkey(

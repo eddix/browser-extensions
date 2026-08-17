@@ -128,6 +128,10 @@ struct SettingsView: View {
                     Text(vaultSettings.status)
                         .foregroundStyle(vaultSettings.status.hasPrefix("监听") ? .green : .secondary)
                 }
+                if !vaultSettings.status.hasPrefix("监听") {
+                    Text("卡在「正在打开收藏库」通常是缺少访问权限：系统设置 → 隐私与安全性 → 文件和文件夹 → nodia，勾选「文稿」文件夹。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
 
             Section("配对令牌") {
