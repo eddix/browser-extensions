@@ -4,9 +4,15 @@ import Foundation
 /// as — each with a different lifetime and a different way of coming back to
 /// you. See ../../README.md.
 public enum LinkKind: String, Codable, CaseIterable, Sendable {
-    /// Reference material to jump to on demand, for months. Never "finished".
+    /// A platform or console you jump to — Ledger, a Grafana board, a ConfigHub
+    /// namespace. A staging area, not an asset: the endgame is turning these
+    /// into launcher scripts, after which the entry can go. Never summarized:
+    /// you save it to click it, not to search it.
     case bookmark
-    /// Something to read in the next days or weeks, then let go.
+    /// The archive, and the real long-term asset. Most of it will never be
+    /// read again — that isn't the point. The point is that months later
+    /// "I saved something about opening an HSBC account" finds it, which is
+    /// why this is the kind that gets a summary and keywords.
     case readlater
     /// Work to do. Written as a Markdown checkbox so Obsidian Tasks and the
     /// daily note can pick it up — a tab bar can't represent "done".

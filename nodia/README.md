@@ -19,11 +19,19 @@ from one prompt.
 A browser tab bar gets used as three different things at once, and they have
 nothing in common except being a URL you didn't want to lose:
 
-| Used as | Lifetime | How you want it back | Done when |
+| Used as | What it really is | Lifetime | Done when |
 |---|---|---|---|
-| **bookmark** | months, tracks a project | on demand, instantly | never |
-| **read later** | days to weeks | pushed at you when free | read, or dropped |
-| **todo** | until finished | at the right moment | completed |
+| **platform** | a console you jump to (Ledger, Grafana, ConfigHub) — a **staging area**, not an asset | short: until it becomes a launcher script | it's a script; the entry can go |
+| **archive** | the actual long-term asset — most of it never gets read again, and that's fine | permanent | never; it just has to stay findable |
+| **todo** | work you can't do now | until finished | completed |
+
+The middle row is the one that gets mislabeled. "Read later" sounds like a
+debt you owe — but you won't read 80% of it, and that isn't the failure. Its
+job is to answer *"I saved something about opening an HSBC account, where is
+it?"* months later. That's why it's the only kind that gets a summary and
+keywords: it is saved to be **found**, while a console link is saved to be
+**clicked**, and summarizing the latter would spend 15 seconds on text nobody
+will ever read.
 
 Measured on a real sidebar: of 71 pinned tabs, **75% hadn't been touched in 30
 days** and the oldest was 549 days. Meanwhile the unpinned ones were all under
@@ -46,17 +54,21 @@ what you saved. One index, one prompt, one process.
 `chrome://extensions`). It sends the current page to nodia, which files it into
 the vault as Markdown.
 
-- **Click the icon** → a review panel: it extracts the page text, summarizes
-  it, and shows you the result *before* anything is written. Edit the summary
-  if the model drifted, then pick a kind — `1`/`2`/`3` for bookmark / read
-  later / todo, `⏎` for the one you used last, `esc` to cancel.
-- **Right-click** → save as a given kind straight away, skipping the panel
-  (still summarized — the kind is already explicit, so there's nothing to
-  confirm). TODOs are written as `- [ ]` checkboxes into `Bookmark/00-Todo.md`,
-  so Obsidian Tasks and your daily note can pick them up; a tab bar can't
+- **Click the icon** → the panel asks for the kind first (`1`/`2`/`3`, `⏎` for
+  the one you used last, `esc` to cancel). Nothing has been read from the page
+  at that point.
+  - **平台 / 待办** → saved instantly. The page text is never read at all.
+  - **档案** → *then* it extracts, summarizes, and shows you the summary and
+    keywords before writing. Edit either if the model drifted, `⏎` to save.
+- **Right-click** → save as a given kind directly, skipping the panel.
+- TODOs are written as `- [ ]` checkboxes into `Bookmark/00-Todo.md`, so
+  Obsidian Tasks and your daily note can pick them up; a tab bar can't
   represent "done".
 - The icon turns green on pages already in the vault, and the panel says so
   before you save a duplicate.
+
+Asking for the kind *before* doing the work is what keeps the common case
+fast: the kind decides whether a model is called at all.
 
 The review step is deliberate. Saving without seeing the result is what
 produced the original problem: every link already in the vault was *also*

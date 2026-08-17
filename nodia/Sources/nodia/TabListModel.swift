@@ -47,8 +47,10 @@ final class TabListModel: ObservableObject {
         fillIconCache()
     }
 
+    // Labels name what each kind is *for*: a console link is somewhere you
+    // jump to, an archive entry is something you'll want to find again.
     private static let kindLabel: [LinkKind: String] = [
-        .bookmark: "书签", .readlater: "稍后读", .todo: "待办",
+        .bookmark: "平台", .readlater: "档案", .todo: "待办",
     ]
 
     /// Vault entries ride the same pipeline as tabs, so ranking, highlighting

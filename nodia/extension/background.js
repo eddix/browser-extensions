@@ -147,82 +147,96 @@ async function inPage(tabId, func, args = []) {
 }
 
 /**
- * Extract → summarize → show the result → save what's approved.
+ * Ask for the kind first, then do only the work that kind needs.
  *
- * The summary happens before the write, not after, because seeing what got
- * captured is what makes closing the tab feel safe. Nothing reaches the vault
- * until it's confirmed.
+ * A console link is saved to be clicked later — summarizing it would spend ~15s
+ * on text you'll never read, so it saves immediately and the page is never
+ * read at all. An archive entry is saved to be *found* later, so it gets the
+ * full treatment: extract, summarize, review, confirm.
  */
 async function reviewAndSave() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !isValidUrl(tab.url)) return showError('这个页面不能保存');
 
+  const defaultKind = await getLastKind();
   let panelUp = false;
+
   try {
     // Restricted pages (chrome://, the web store) refuse injection — fall back
-    // to saving without review rather than failing outright.
+    // to saving as the remembered kind rather than failing outright.
     try {
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['panel.js'] });
-      await inPage(tab.id, (t) => nodiaPanelOpen(t), ['正在抓取正文…']);
       panelUp = true;
     } catch (e) {
       panelUp = false;
     }
 
-    const content = await grabContent(tab.id);
-    if (panelUp) {
-      await inPage(tab.id, (t) => nodiaPanelStatus(t), ['正在生成摘要…']);
-    }
-
-    const preview = await api('/api/preview', {
-      method: 'POST',
-      body: payloadFor(tab, await getLastKind(), { content }),
-    });
-
     if (!panelUp) {
-      // No panel to confirm in; save straight away so the page isn't lost.
-      const kind = await getLastKind();
-      showSaveResult(await sendLinks(payloadFor(tab, kind, {
-        summary: preview.summary || '', keywords: preview.keywords || [],
-      })), kind);
+      showSaveResult(await sendLinks(payloadFor(tab, defaultKind)), defaultKind);
       return setIcon('saved');
     }
 
-    const decision = await inPage(tab.id, (p) => nodiaPanelDecide(p), [{
-      title: preview.title || tab.title || '',
+    // Cheap and local — knowing it's a duplicate is worth having up front.
+    const dup = await checkUrlExists(tab.url);
+
+    const kind = await inPage(tab.id, (p) => nodiaPanelChooseKind(p), [{
+      title: tab.title || '',
+      existsIn: dup.exists ? '收藏库' : '',
+      defaultKind,
+    }]);
+    if (!kind) return;                       // cancelled — nothing read, nothing sent
+
+    await chrome.storage.local.set({ [KIND_KEY]: kind });
+
+    // Console links and todos: no page text, no model, no second confirmation.
+    if (kind !== 'readlater') {
+      await inPage(tab.id, () => nodiaPanelClose());
+      showSaveResult(await sendLinks(payloadFor(tab, kind)), kind);
+      return setIcon('saved');
+    }
+
+    await inPage(tab.id, (t) => nodiaPanelBusy(t), ['正在抓取正文…']);
+    const content = await grabContent(tab.id);
+    await inPage(tab.id, (t) => nodiaPanelBusy(t), ['正在生成摘要…']);
+
+    const preview = await api('/api/preview', {
+      method: 'POST',
+      body: payloadFor(tab, kind, { content }),
+    });
+
+    const approved = await inPage(tab.id, (p) => nodiaPanelConfirm(p), [{
       summary: preview.summary || '',
       keywords: preview.keywords || [],
       reason: preview.reason || '',
-      existsIn: preview.exists_in || '',
-      defaultKind: await getLastKind(),
     }]);
+    if (!approved) return;
 
-    if (!decision || decision.action !== 'save') return;
-
-    await chrome.storage.local.set({ [KIND_KEY]: decision.kind });
-    const result = await sendLinks(
-      payloadFor(tab, decision.kind, {
-        summary: decision.summary || '',
-        keywords: decision.keywords || [],
-      }),
-    );
-    showSaveResult(result, decision.kind);
+    const result = await sendLinks(payloadFor(tab, kind, {
+      summary: approved.summary || '',
+      keywords: approved.keywords || [],
+    }));
+    showSaveResult(result, kind);
     setIcon('saved');
   } catch (error) {
     if (panelUp) {
-      await inPage(tab.id, () => {
-        window.__nodiaPanel?.host.remove();
-        delete window.__nodiaPanel;
-      }).catch(() => {});
+      await inPage(tab.id, () => nodiaPanelClose()).catch(() => {});
     }
     showError(error.message || '保存失败');
     setIcon('error');
   }
 }
 
-/// Right-click path: no panel, but still summarized — the kind is already
-/// explicit, so there is nothing left to confirm.
+/// Right-click path: the kind is already explicit, so there's nothing to
+/// confirm. Only the archive kind pays for a summary — a console link is
+/// saved to be clicked, not searched.
 async function saveDirectly(tab, kind) {
+  if (kind !== 'readlater') {
+    const result = await sendLinks(payloadFor(tab, kind));
+    await chrome.storage.local.set({ [KIND_KEY]: kind });
+    showSaveResult(result, kind);
+    return setIcon('saved');
+  }
+
   const content = await grabContent(tab.id);
   let summary = '';
   let keywords = [];
@@ -266,7 +280,7 @@ async function sendLinks(links) {
 
 // ---------- 反馈 ----------
 
-const KIND_LABEL = { bookmark: '书签', readlater: '稍后读', todo: '待办' };
+const KIND_LABEL = { bookmark: '平台入口', readlater: '档案', todo: '待办' };
 
 function showSaveResult(result, kind) {
   const label = KIND_LABEL[kind] || '';
@@ -392,10 +406,10 @@ chrome.runtime.onInstalled.addListener(() => {
     const items = [
       // Right-click already names the kind, so these skip the panel — still
       // summarized, just nothing left to confirm.
-      ['save-readlater', '直接存为稍后读', ['page', 'link', 'selection']],
-      ['save-bookmark', '直接存为书签', ['page', 'link', 'selection']],
-      ['save-todo', '直接存为待办', ['page', 'link', 'selection']],
-      ['save-window', '保存窗口内全部标签（稍后读）', ['action']],
+      ['save-readlater', '存入档案（生成摘要）', ['page', 'link', 'selection']],
+      ['save-bookmark', '存为平台入口', ['page', 'link', 'selection']],
+      ['save-todo', '存为待办', ['page', 'link', 'selection']],
+      ['save-window', '保存窗口内全部标签（档案）', ['action']],
       ['open-settings', '设置…', ['action']],
     ];
     for (const [id, title, contexts] of items) {
