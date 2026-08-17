@@ -36,12 +36,23 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSUIElement</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSAppleEventsUsageDescription</key><string>nodia 通过 Arc 的脚本接口切换到你选中的标签页。</string>
+    <!-- 收藏库默认在 ~/Documents 下。没有这条声明，系统不会弹授权框，而是
+         直接拒绝访问——表现为服务起不来、界面一直卡在「正在打开收藏库」。 -->
+    <key>NSDocumentsFolderUsageDescription</key><string>nodia 把你保存的链接写进这里的 Obsidian 收藏库。</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
 PLIST
 
-echo "▶ ad-hoc signing…"
-codesign --force --deep --sign - "$APP"
+# 签名身份决定了系统隐私授权跟着谁走。ad-hoc 签名每次构建的哈希都不一样，
+# 系统会当成一个全新的 app，上次授予的「文稿」权限随之作废——每装一次就得
+# 重新授权一次。设了 NODIA_SIGN_IDENTITY（自签证书即可）身份才稳定。
+SIGN_IDENTITY="${NODIA_SIGN_IDENTITY:--}"
+if [ "$SIGN_IDENTITY" = "-" ]; then
+    echo "▶ ad-hoc signing…（每次重装都需重新授权文稿访问）"
+else
+    echo "▶ signing as $SIGN_IDENTITY …"
+fi
+codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
 
 echo "✅ built $APP"
