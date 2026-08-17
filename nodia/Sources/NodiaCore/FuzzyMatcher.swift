@@ -31,7 +31,17 @@ public enum FuzzyMatcher {
             return (tab, s)
         }
         return scored
-            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.lastActiveAt > $1.0.lastActiveAt }
+            .sorted { a, b in
+                if a.1 != b.1 { return a.1 > b.1 }
+                // On an equal score, prefer the deliberate entry: you defined a
+                // jump template on purpose, and there are only a handful of
+                // them. A live tab still beats a saved link, since switching to
+                // an open window beats reopening a URL.
+                if a.0.origin != b.0.origin {
+                    return originPriority(a.0.origin) < originPriority(b.0.origin)
+                }
+                return a.0.lastActiveAt > b.0.lastActiveAt
+            }
             .map(\.0)
     }
 
@@ -39,12 +49,22 @@ public enum FuzzyMatcher {
     /// that contains the query as a literal substring gets a big bonus, so real
     /// "doc"/"docx" matches dominate scattered subsequences (e.g. the "d…o…c" in
     /// "wiki.example.com").
-    static func score(_ tab: TabEntry, query q: String, needle: [Character]) -> Int? {
+    public static func score(_ tab: TabEntry, query q: String, needle: [Character]) -> Int? {
         var best: Int?
         for (keyPath, weight) in fields {
             let field = tab[keyPath: keyPath].lowercased()
             if let s = optimalScore(needle: needle, haystack: Array(field)) {
-                let bonus = field.contains(q) ? substringBonus : 0
+                var bonus = field.contains(q) ? substringBonus : 0
+                // A field that *starts* with the query is a better answer than
+                // one that merely contains it: "Metrics 服务大盘" is what you meant
+                // by "metrics"; "什么是 MetricsDuty - 文档中心" happens to include it.
+                // Without this every substring hit ties, and the tiebreak decides.
+                if field.hasPrefix(q) { bonus += prefixBonus }
+                // A field that *is* the query is the strongest signal there is,
+                // and must outrank both the prefix bonus and any origin
+                // preference — otherwise the tiebreak decides a case that
+                // wasn't actually tied.
+                if field == q { bonus += exactBonus }
                 best = max(best ?? Int.min, Int((Double(s + bonus) * weight).rounded()))
             }
         }
@@ -57,9 +77,19 @@ public enum FuzzyMatcher {
         return best
     }
 
+    private static func originPriority(_ o: TabEntry.Origin) -> Int {
+        switch o {
+        case .jumpTemplate: return 0
+        case .arcTab:       return 1
+        case .vault:        return 2
+        }
+    }
+
     private static let consecutiveBonus = 6
     private static let boundaryBonus = 8
     private static let substringBonus = 50
+    private static let prefixBonus = 30
+    private static let exactBonus = 40
 
     /// Highest-scoring subsequence alignment of `needle` in `haystack`, or nil if
     /// `needle` is not a subsequence. O(needle × haystack) via a prefix-max DP.

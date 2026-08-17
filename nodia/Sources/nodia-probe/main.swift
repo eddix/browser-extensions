@@ -64,6 +64,45 @@ do {
     } else {
         print("   (vault 不可读，跳过)")
     }
+    // Jump templates ranked alongside tabs — reproduces what ⌘⇧K shows, so a
+    // "why didn't my template come up" question is answerable without the GUI.
+    let jumps = JumpStore.load(vaultRoot: URL(fileURLWithPath: vaultPath))
+    print("\n🔀 jump templates: \(jumps.count)")
+    let jumpRows = jumps.map { t in
+        TabEntry(
+            id: "jump:\(t.name)", title: t.name, url: t.urlTemplate,
+            spaceTitle: "跳转 · " + t.parameters.joined(separator: " · "),
+            lastActiveAt: 0, origin: .jumpTemplate,
+            note: (t.keywords + [t.note ?? ""]).joined(separator: " ")
+        )
+    }
+
+    let probeQuery = ProcessInfo.processInfo.environment["NODIA_QUERY"] ?? "metrics"
+    let vaultRows: [TabEntry] = (try? VaultStore(vaultRoot: URL(fileURLWithPath: vaultPath)))
+        .map { store in
+            let open = Set(tabs.map { VaultStore.normalize($0.url) })
+            return store.allEntries().compactMap { e in
+                open.contains(VaultStore.normalize(e.url)) ? nil : TabEntry(
+                    id: "vault:\(e.url)", title: e.title, url: e.url,
+                    spaceTitle: "档案", lastActiveAt: 0, origin: .vault,
+                    note: e.keywords.joined(separator: " ")
+                )
+            }
+        } ?? []
+
+    let all = tabs + jumpRows + vaultRows
+    print("\n🔎 搜索 \"\(probeQuery)\" 的排序（共 \(all.count) 条候选）:")
+    for (i, row) in FuzzyMatcher.rank(all, query: probeQuery).prefix(12).enumerated() {
+        let mark: String
+        switch row.origin {
+        case .jumpTemplate: mark = "🔀 模板"
+        case .vault:        mark = "📚 档案"
+        case .arcTab:       mark = "·  标签"
+        }
+        let score = FuzzyMatcher.score(row, query: probeQuery.lowercased(),
+                                       needle: Array(probeQuery.lowercased())) ?? -1
+        print(String(format: "  %2d. [%4d] %@  %@", i + 1, score, mark, String(row.title.prefix(46))))
+    }
 } catch {
     print("❌ \(error)")
     exit(1)
