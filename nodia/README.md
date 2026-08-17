@@ -156,7 +156,7 @@ remember one exists, and "what can I jump to?" isn't a question search can
 answer.
 
 Any `{name}` is a parameter. A field of the same name lists its candidates;
-a parameter with no such field takes free input (a service, say). Placeholders can
+a parameter with no such field takes free input (a service name, say). Placeholders can
 sit anywhere a string can — including partway through a hostname.
 
 Templates live in the vault as Markdown for the same reason everything else

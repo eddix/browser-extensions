@@ -223,7 +223,7 @@ final class SummaryUpdateTests: XCTestCase {
         XCTAssertTrue(twice.contains("  - keywords: b"))
     }
 
-    /// Wiki titles carry zero-width watermarks; the block finder has to see
+    /// Those titles carry zero-width watermarks; the block finder has to see
     /// past them or the entry looks like it isn't there.
     func testFindsEntryUnderAWatermarkedTitle() throws {
         let before = """

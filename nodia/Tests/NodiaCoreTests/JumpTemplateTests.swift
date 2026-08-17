@@ -77,7 +77,7 @@ final class JumpTemplateTests: XCTestCase {
           - url: https://console-{region}.example.com/metrics/overview/server_overview?service={service}
           - region: i18n, us, eu
           - keywords: metrics, 监控
-          - note: 看某个 service 的服务大盘
+          - note: 看某个服务的监控大盘
 
         - Pipeline 任务节点
           - url: https://pipeline-{region}.example.net/pipeline/development/node/{node}?project={project}
@@ -89,7 +89,7 @@ final class JumpTemplateTests: XCTestCase {
         XCTAssertEqual(a.name, "Metrics 服务大盘")
         XCTAssertEqual(a.choices["region"], ["i18n", "us", "eu"])
         XCTAssertEqual(a.keywords, ["metrics", "监控"])
-        XCTAssertEqual(a.note, "看某个 service 的服务大盘")
+        XCTAssertEqual(a.note, "看某个服务的监控大盘")
         XCTAssertEqual(a.parameters, ["region", "service"])
 
         XCTAssertEqual(templates[1].parameters, ["region", "node", "project"])

@@ -231,14 +231,14 @@ final class VaultAPIEndToEndTests: XCTestCase {
 
     func testTodoLandsInItsOwnFileAsACheckbox() throws {
         let payload = Data("""
-        {"title":"修 监控组件 的告警","url":"https://tasks.example.net/x","kind":"todo"}
+        {"title":"修监控组件的告警","url":"https://tasks.example.net/x","kind":"todo"}
         """.utf8)
         XCTAssertEqual(try send("/api/links", method: "POST", body: payload).status, 200)
 
         let todo = (try? String(
             contentsOf: root.appendingPathComponent("Bookmark/00-Todo.md"), encoding: .utf8
         )) ?? ""
-        XCTAssertTrue(todo.contains("- [ ] 修 监控组件 的告警"), todo)
+        XCTAssertTrue(todo.contains("- [ ] 修监控组件的告警"), todo)
         XCTAssertTrue(todayInboxText().isEmpty, "待办不应混进当日 inbox")
     }
 

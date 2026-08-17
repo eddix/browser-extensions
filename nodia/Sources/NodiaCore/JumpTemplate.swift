@@ -76,7 +76,7 @@ public struct JumpTemplate: Sendable, Equatable {
     /// Percent-encodes only what would actually break a URL.
     ///
     /// Values land in hostnames as often as in query strings (`{site}`),
-    /// and blanket query-encoding would corrupt a host. Everything a service,
+    /// and blanket query-encoding would corrupt a host. Everything a service name,
     /// region, or time window is made of passes through untouched.
     static func encode(_ value: String) -> String {
         var allowed = CharacterSet.alphanumerics
@@ -160,7 +160,7 @@ public struct JumpStore: Sendable {
 
     /// Written on first run so the format is discoverable by example rather
     /// than by reading docs. Seeded from patterns actually present in the
-    /// vault: site in the host, namespace or service as the target.
+    /// vault: site in the host, namespace or service name as the target.
     public static func starterFile() -> String {
         """
         ---
@@ -177,26 +177,26 @@ public struct JumpStore: Sendable {
           - site: console-i18n.example.com, console-us.example.com, console-eu.example.net
           - window: now-1h, now-6h, now-24h, now-7d
           - keywords: metrics, 服务大盘, 监控, service
-          - note: 看某个 service 的服务监控总览
+          - note: 看某个服务的监控总览
 
         - ConfigHub 配置
           - url: https://{site}/confighub/namespace/{namespace}?env={env}&dir_path=all_dir&region=all_region&scope=all&tab=config
           - site: console-i18n.example.com, console-us.example.com, console-eu.example.net, console-staging.example.com
-          - env: prod, ppe, staging
+          - env: prod, staging, test
           - keywords: confighub, 配置, 配置中心, namespace, 动态配置
           - note: 某个 namespace 的配置列表
 
         - ConfigHub 变更历史
           - url: https://{site}/confighub/namespace/{namespace}?scope=history&env={env}&release_status=running&region=all_region&rn=10
           - site: console-i18n.example.com, console-us.example.com, console-eu.example.net, console-staging.example.com
-          - env: prod, ppe, staging
+          - env: prod, staging, test
           - keywords: confighub, 变更, 历史, 发布记录, 回滚
           - note: 谁改的、改了什么、能否回滚
 
         - Pipeline 任务节点
           - url: https://pipeline-{region}.example.net/pipeline/development/node/{node}?project={project}&version=-1
           - region: sg, norway, oceanus
-          - keywords: pipeline, pipeline, 任务, 节点
+          - keywords: pipeline, 任务, 节点, 调度
 
         - Ledger 对账平台
           - url: https://ledger{suffix}/

@@ -64,7 +64,7 @@ final class VaultStoreTests: XCTestCase {
         XCTAssertEqual(s.allEntries().first?.title, "内部工具 2.0 用户手册 - 内部文档")
     }
 
-    /// Wiki titles start with a run of zero-width watermark characters. Swift
+    /// Those titles start with a run of zero-width watermark characters. Swift
     /// compares by grapheme cluster and a joiner binds to the preceding space,
     /// so `"- \u{200C}x".hasPrefix("- ")` is false — parsing has to strip
     /// invisibles first or these entries lose their title and summary.
@@ -120,10 +120,10 @@ final class VaultStoreTests: XCTestCase {
     /// daily note can't pick it up — the whole reason todos leave the tab bar.
     func testTodoWritesCheckboxIntoItsOwnFile() throws {
         let s = try store()
-        _ = s.save([VaultLink(title: "修 监控组件", url: "https://example.com/t", kind: .todo)])
+        _ = s.save([VaultLink(title: "修监控组件", url: "https://example.com/t", kind: .todo)])
 
         let todo = read("Bookmark/00-Todo.md")
-        XCTAssertTrue(todo.contains("- [ ] 修 监控组件\n"), "todo 应为 checkbox 形式")
+        XCTAssertTrue(todo.contains("- [ ] 修监控组件\n"), "todo 应为 checkbox 形式")
         XCTAssertTrue(todo.contains("  - tag: #from-browser #todo\n"))
         XCTAssertTrue(read(inboxFile()).isEmpty, "todo 不应写进当日 inbox 文件")
     }
@@ -157,7 +157,7 @@ final class VaultStoreTests: XCTestCase {
     // MARK: - Decoding what the extension posts
 
     func testDecodesExtensionPayloadAndStripsZeroWidth() throws {
-        // Wiki titles carry zero-width watermark characters.
+        // Those titles carry zero-width watermark characters.
         let json = """
         {"title":"\u{200B}\u{2060}下单链路监控打点 - 内部文档",
          "url":"https://wiki.example.com/wiki/W",

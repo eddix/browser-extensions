@@ -98,7 +98,7 @@ function extractPageText(limit) {
   };
 
   const text = (pick().innerText || '')
-    .replace(/[​-‏⁠-⁤﻿]/g, '') // 文档平台标题/正文的零宽水印字符
+    .replace(/[​-‏⁠-⁤﻿]/g, '') // 部分文档平台标题/正文里的零宽水印字符
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 

@@ -97,11 +97,11 @@ final class SummarizerTests: XCTestCase {
         XCTAssertEqual(outcome, .failed(reason: "没抓到正文"))
     }
 
-    /// Wiki is on the intranet list even though the domain is publicly
+    /// A wiki host is on the intranet list even though the domain is publicly
     /// resolvable — internal wikis live there.
-    func testWikiIsTreatedAsIntranet() {
+    func testWikiHostIsTreatedAsIntranet() {
         let s = Summarizer(config: config())
-        XCTAssertEqual(s.route(for: "https://wiki.example.cn/wiki/x"), .intranet)
+        XCTAssertEqual(s.route(for: "https://wiki.example.net/wiki/x"), .intranet)
     }
 
     // MARK: - Wire formats

@@ -82,7 +82,7 @@ final class RankingTests: XCTestCase {
     /// matching — searching 待办 should filter to todos.
     func testSavedLinkStillMatchesItsKindLabel() throws {
         let todo = TabEntry(
-            id: "v", title: "修 监控组件", url: "https://x.com/a",
+            id: "v", title: "修监控组件", url: "https://x.com/a",
             spaceTitle: "待办", lastActiveAt: 0, origin: .vault
         )
         XCTAssertEqual(FuzzyMatcher.rank([todo], query: "待办").count, 1)

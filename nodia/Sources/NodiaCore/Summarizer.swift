@@ -75,10 +75,12 @@ public struct Summarizer: Sendable {
         /// intranet endpoint or nowhere at all.
         public var intranetSuffixes: [String]
 
+        /// Placeholders. Replace these with your own internal suffixes in
+        /// Settings before configuring a public endpoint: a host that isn't
+        /// listed is treated as public, so an unedited list plus a public
+        /// model is exactly the leak this routing exists to prevent.
         public static let defaultIntranetSuffixes = [
-            "example.com", "example.com", "example.com", "example.net",
-            "example.net", "example.net", "example.com", "example.cn",
-            "wiki.example.cn", "wiki.example.com",
+            "example.com", "example.net", "corp.example",
         ]
 
         public init(
