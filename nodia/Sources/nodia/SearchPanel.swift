@@ -73,6 +73,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
                 self?.confirmAndClose(cluster.duplicates,
                                       summary: "“\(cluster.keeper.title)” 的 \(cluster.duplicates.count) 个重复")
             },
+            onCommitFilling: { [weak self] value in self?.commitFilling(value) },
             onOpenSettings: { [weak self] in self?.openSettings() }
         )
         let host = NSHostingView(rootView: root)
@@ -121,7 +122,9 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
             case 125: self.model.moveSelection(1); return nil   // ↓
             case 126: self.model.moveSelection(-1); return nil  // ↑
             case 36, 76:                                        // return / enter
-                if self.model.mode == .duplicates {
+                if self.model.filling != nil {
+                    self.commitFillingSelection()
+                } else if self.model.mode == .duplicates {
                     if cmd { self.dedupeAll() } else { self.dedupeSelectedCluster() }
                 } else {
                     self.activateSelected()
@@ -141,7 +144,10 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     }
 
     private func handleEscape() {
-        if !model.query.isEmpty { model.query = "" }
+        // Backing out of a half-filled jump returns to search, not out of the
+        // panel — you were mid-task.
+        if model.filling != nil { model.cancelFilling() }
+        else if !model.query.isEmpty { model.query = "" }
         else if model.mode == .duplicates { model.toggleMode() }
         else if model.mode == .byDomain { model.toggleDomainMode() }
         else { hide() }
@@ -149,7 +155,29 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
 
     private func activateSelected() {
         guard let tab = model.selectedTab else { return }
+        // A jump template isn't a URL yet — collect its parameters first.
+        if model.beginFilling(tab) { return }
         activate(tab)
+    }
+
+    /// Takes the highlighted candidate for the current parameter (keyboard).
+    private func commitFillingSelection() {
+        let options = model.fillingOptions
+        let value = options.indices.contains(model.selectedIndex)
+            ? options[model.selectedIndex]
+            : model.query.trimmingCharacters(in: .whitespaces)
+        commitFilling(value)
+    }
+
+    /// Commits one parameter value. When it was the last one, the finished URL
+    /// opens and the panel closes.
+    private func commitFilling(_ value: String) {
+        guard !value.isEmpty else { return }
+        if let url = model.commitFillingValue(value) {
+            hide()
+            NSWorkspace.shared.open(url)
+            Log.write("jump: opened \(url.absoluteString)")
+        }
     }
 
     private func activate(_ tab: TabEntry) {

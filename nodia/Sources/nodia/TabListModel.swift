@@ -17,8 +17,28 @@ final class TabListModel: ObservableObject {
 
     private var arcTabs: [TabEntry] = []
     private var vaultTabs: [TabEntry] = []
-    private var tabs: [TabEntry] { arcTabs + vaultTabs }
+    private var jumpRows: [TabEntry] = []
+    private var tabs: [TabEntry] { arcTabs + jumpRows + vaultTabs }
     private weak var vaultStore: VaultStore?
+
+    // MARK: - Jump templates
+
+    private var templates: [JumpTemplate] = []
+
+    /// Set while filling in a jump's parameters. The search field becomes the
+    /// input for one parameter at a time, so the same keyboard drives both
+    /// finding a jump and completing it.
+    @Published private(set) var filling: Filling?
+
+    struct Filling {
+        let template: JumpTemplate
+        var values: [String: String] = [:]
+        var index: Int = 0
+
+        var parameter: String { template.parameters[index] }
+        var isLast: Bool { index == template.parameters.count - 1 }
+        var progress: String { "\(index + 1)/\(template.parameters.count)" }
+    }
     private let favicons: FaviconStore?
     private var iconCache: [String: NSImage] = [:]
 
@@ -27,10 +47,82 @@ final class TabListModel: ObservableObject {
         reload()
     }
 
-    /// Lets search reach saved links, not just open tabs.
+    /// Lets search reach saved links and jump templates, not just open tabs.
     func attachVault(_ store: VaultStore?) {
         vaultStore = store
         reloadVault()
+        reloadJumps()
+    }
+
+    /// Jump templates are rows like any other, so one prompt covers open tabs,
+    /// saved links, and parameterized platform jumps.
+    private func reloadJumps() {
+        guard let vaultStore else { templates = []; jumpRows = []; return }
+        templates = JumpStore.load(vaultRoot: vaultStore.vaultRoot)
+        jumpRows = templates.map { t in
+            let params = t.parameters.joined(separator: " · ")
+            return TabEntry(
+                id: "jump:\(t.name)",
+                title: t.name,
+                url: t.urlTemplate,
+                spaceTitle: "跳转" + (params.isEmpty ? "" : " · \(params)"),
+                lastActiveAt: 0,
+                origin: .jumpTemplate,
+                note: (t.keywords + [t.note ?? ""]).joined(separator: " ")
+            )
+        }
+        Log.write("reload: \(templates.count) jump templates")
+    }
+
+    func template(for entry: TabEntry) -> JumpTemplate? {
+        guard entry.origin == .jumpTemplate else { return nil }
+        return templates.first { "jump:\($0.name)" == entry.id }
+    }
+
+    /// Enters parameter-filling mode. Returns false if this isn't a template.
+    @discardableResult
+    func beginFilling(_ entry: TabEntry) -> Bool {
+        guard let t = template(for: entry), !t.parameters.isEmpty else { return false }
+        filling = Filling(template: t)
+        query = ""
+        selectedIndex = 0
+        return true
+    }
+
+    /// Candidates for the parameter being filled, narrowed by what's typed.
+    /// A parameter with no candidate list is free input — the typed text is
+    /// offered back as the single option.
+    var fillingOptions: [String] {
+        guard let filling else { return [] }
+        let all = filling.template.options(for: filling.parameter)
+        let q = query.trimmingCharacters(in: .whitespaces)
+        if all.isEmpty { return q.isEmpty ? [] : [q] }
+        guard !q.isEmpty else { return all }
+        let matched = all.filter { $0.lowercased().contains(q.lowercased()) }
+        // Typed something that isn't in the list — still allow it.
+        return matched.isEmpty ? [q] : matched
+    }
+
+    /// Commits one value. Returns the URL once every parameter is filled.
+    func commitFillingValue(_ value: String) -> URL? {
+        guard var f = filling else { return nil }
+        f.values[f.parameter] = value
+        if f.isLast {
+            filling = nil
+            query = ""
+            return f.template.expand(f.values)
+        }
+        f.index += 1
+        filling = f
+        query = ""
+        selectedIndex = 0
+        return nil
+    }
+
+    func cancelFilling() {
+        filling = nil
+        query = ""
+        selectedIndex = 0
     }
 
     /// Re-read the sidebar (cheap; ~ms for a few hundred tabs).
@@ -44,6 +136,7 @@ final class TabListModel: ObservableObject {
             Log.write("reload: parse FAILED: \(error)")
         }
         reloadVault()
+        reloadJumps()
         fillIconCache()
     }
 
@@ -74,7 +167,7 @@ final class TabListModel: ObservableObject {
                 url: entry.url,
                 spaceTitle: subtitle,
                 lastActiveAt: 0,          // sorts below live tabs on an empty query
-                isVault: true,
+                origin: .vault,
                 // Matched but not shown: the row already carries the summary.
                 note: entry.keywords.joined(separator: " ")
             )
@@ -87,6 +180,12 @@ final class TabListModel: ObservableObject {
     var results: [TabEntry] { FuzzyMatcher.rank(tabs, query: query) }
 
     func moveSelection(_ delta: Int) {
+        if filling != nil {
+            let count = fillingOptions.count
+            guard count > 0 else { return }
+            selectedIndex = max(0, min(count - 1, selectedIndex + delta))
+            return
+        }
         let count: Int
         switch mode {
         case .search:     count = results.count

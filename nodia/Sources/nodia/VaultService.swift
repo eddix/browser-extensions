@@ -26,6 +26,7 @@ final class VaultService {
         do {
             let store = try VaultStore(vaultRoot: settings.vaultURL)
             self.store = store
+            Self.seedJumpsFileIfMissing(vaultRoot: settings.vaultURL)
 
             let api = VaultAPI(store: store) { [weak self] title, url, content, done in
                 self?.preview(title: title, url: url, content: content, done: done)
@@ -50,6 +51,24 @@ final class VaultService {
         server = nil
         store = nil
         start()
+    }
+
+    /// Writes the jump-template file once, with worked examples.
+    ///
+    /// A config format nobody knows exists is a feature nobody uses — the file
+    /// documents itself by being there and already working. Never overwritten.
+    private static func seedJumpsFileIfMissing(vaultRoot: URL) {
+        let file = vaultRoot.appendingPathComponent(JumpStore.fileName)
+        guard !FileManager.default.fileExists(atPath: file.path) else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try JumpStore.starterFile().write(to: file, atomically: true, encoding: .utf8)
+            Log.write("jumps: seeded \(JumpStore.fileName)")
+        } catch {
+            Log.write("jumps: could not seed template file — \(error.localizedDescription)")
+        }
     }
 
     private func setStatus(_ text: String) {

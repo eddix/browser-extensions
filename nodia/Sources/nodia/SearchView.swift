@@ -9,6 +9,7 @@ struct SearchView: View {
     @ObservedObject var themeStore: ThemeStore
     var onActivate: (TabEntry) -> Void
     var onDedupeCluster: (TabCluster) -> Void
+    var onCommitFilling: (String) -> Void
     var onOpenSettings: () -> Void
     @FocusState private var searchFocused: Bool
 
@@ -25,10 +26,14 @@ struct SearchView: View {
             VStack(spacing: 0) {
                 header(r, mode: mode)
                 Divider().overlay(r.palette.foreground.opacity(0.12))
-                switch mode {
-                case .duplicates: duplicateList(r)
-                case .byDomain:   domainList(r)
-                case .search:     searchList(r)
+                if model.filling != nil {
+                    fillingList(r)
+                } else {
+                    switch mode {
+                    case .duplicates: duplicateList(r)
+                    case .byDomain:   domainList(r)
+                    case .search:     searchList(r)
+                    }
                 }
                 Divider().overlay(r.palette.foreground.opacity(0.12))
                 footer(r, mode: mode)
@@ -50,17 +55,28 @@ struct SearchView: View {
     // enough); duplicates/byDomain show a tinted context chip instead, so the
     // active mode is visible at a glance.
     private func header(_ r: ResolvedTheme, mode: TabListModel.Mode) -> some View {
+        let filling = model.filling
         let placeholder: String
-        switch mode {
-        case .search:     placeholder = "搜索标签页…"
-        case .duplicates: placeholder = "筛选重复…"
-        case .byDomain:   placeholder = "按域名筛选…"
+        if let filling {
+            let hasChoices = !filling.template.options(for: filling.parameter).isEmpty
+            placeholder = hasChoices ? "选择或输入 \(filling.parameter)…" : "输入 \(filling.parameter)…"
+        } else {
+            switch mode {
+            case .search:     placeholder = "搜索标签页…"
+            case .duplicates: placeholder = "筛选重复…"
+            case .byDomain:   placeholder = "按域名筛选…"
+            }
         }
         return HStack(spacing: 10) {
-            switch mode {
-            case .duplicates: modeChip("重复标签", icon: "rectangle.on.rectangle", r)
-            case .byDomain:   modeChip("按域名", icon: "square.grid.2x2", r)
-            case .search:     EmptyView()
+            if let filling {
+                modeChip("\(filling.template.name) · \(filling.parameter) \(filling.progress)",
+                         icon: "arrow.turn.down.right", r)
+            } else {
+                switch mode {
+                case .duplicates: modeChip("重复标签", icon: "rectangle.on.rectangle", r)
+                case .byDomain:   modeChip("按域名", icon: "square.grid.2x2", r)
+                case .search:     EmptyView()
+                }
             }
             TextField(placeholder, text: $model.query)
                 .textFieldStyle(.plain)
@@ -92,6 +108,62 @@ struct SearchView: View {
     }
 
     // MARK: search mode
+
+    /// Candidates for the parameter being filled. A parameter with no
+    /// candidate list shows whatever you type, so free input and pick-from-list
+    /// are the same gesture.
+    private func fillingList(_ r: ResolvedTheme) -> some View {
+        let options = model.fillingOptions
+        let known = model.filling.map { !$0.template.options(for: $0.parameter).isEmpty } ?? false
+        return Group {
+            if options.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "keyboard").font(.system(size: 28))
+                        .foregroundStyle(r.palette.secondary)
+                    Text(known ? "无匹配的候选值" : "输入一个值，回车继续")
+                        .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            ForEach(Array(options.enumerated()), id: \.element) { index, option in
+                                HStack(spacing: 8) {
+                                    Image(systemName: known ? "circle.fill" : "pencil")
+                                        .font(.system(size: known ? 6 : 10))
+                                        .foregroundStyle(r.palette.secondary)
+                                        .frame(width: 14)
+                                    Text(option)
+                                        .font(r.titleFont)
+                                        .foregroundStyle(r.palette.foreground)
+                                    Spacer()
+                                    if !known {
+                                        Text("自由输入")
+                                            .font(r.subtitleFont)
+                                            .foregroundStyle(r.palette.secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(index == model.selectedIndex ? r.palette.selection : .clear)
+                                .clipShape(RoundedRectangle(cornerRadius: 7))
+                                .contentShape(Rectangle())
+                                .id(index)
+                                .onTapGesture { onCommitFilling(option) }
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                    }
+                    .onChange(of: model.selectedIndex) { _, i in
+                        withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(i, anchor: .center) }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 
     private func searchList(_ r: ResolvedTheme) -> some View {
         let results = model.results

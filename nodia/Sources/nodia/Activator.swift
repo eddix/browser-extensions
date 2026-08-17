@@ -13,9 +13,10 @@ enum ActivationResult {
 /// isn't live (closed/moved) or Arc isn't running.
 enum Activator {
     static func activate(_ tab: TabEntry) -> ActivationResult {
-        // A vault entry has no live tab to find. Skip the AppleScript sweep —
-        // it would walk every Space just to fail, costing seconds.
-        if tab.isVault {
+        // A saved link has no live tab to find. Skip the AppleScript sweep —
+        // it would walk every Space just to fail, costing seconds. (A jump
+        // template never reaches here: it has parameters to fill first.)
+        if tab.origin != .arcTab {
             guard let url = URL(string: tab.url) else { return .failed }
             NSWorkspace.shared.open(url)
             return .openedFallback

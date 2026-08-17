@@ -10,6 +10,9 @@ from one prompt.
   link, **esc** to close.
 - Matched characters are highlighted; rows show favicon + title + Space (for a
   live tab) or kind + summary (for a saved link).
+- **Jump templates** — one entry for a whole family of platform URLs. Search
+  its name, then fill the parameters one at a time (candidates are a list;
+  anything without one takes free input), and it opens.
 - **⌘D** duplicate clustering, **⌘G** by-domain browsing.
 - Themeable frosted-glass UI (7 palettes, 4 fonts, size) via the settings
   window. Menu-bar icon: left-click to search, right-click for Settings / Quit.
@@ -104,6 +107,37 @@ The local port is guarded too: every request needs `Authorization: Bearer
 on *any* page you visit could read your whole bookmark index off `localhost` —
 which the previous backend, with `allow_origin(Any)`, permitted.
 
+## Jump templates
+
+Internal platforms encode the same three things over and over — the region in
+the hostname, the feature in the path, the target in the query:
+
+```
+https://console-{region}.example.com/metrics/overview/server_overview?service={service}
+       └──┬───┘                     └──────────┬──────────┘        └──┬──┘
+        region                             feature                  target
+```
+
+Without a way to express that, each combination has to be saved separately —
+which is how the same monitoring console ends up bookmarked once per region
+(four copies of one Metrics board, in the vault this was built against). A
+template collapses the family into one entry:
+
+```markdown
+- Metrics 服务大盘
+  - url: https://console-{region}.example.com/metrics/overview/server_overview?service={service}&from={window}
+  - region: i18n, us, eu
+  - window: now-1h, now-6h, now-24h
+  - keywords: metrics, 监控
+```
+
+Any `{name}` is a parameter. A field of the same name lists its candidates;
+a parameter with no such field takes free input (a service, say). Placeholders can
+sit anywhere a string can — including partway through a hostname.
+
+Templates live in the vault as Markdown for the same reason everything else
+does: the file outlives this app and is editable without it.
+
 ## How it works
 
 | Need | Source (all local, offline) |
@@ -112,6 +146,7 @@ which the previous backend, with `allow_origin(Any)`, permitted.
 | Favicons | Arc's Chromium `…/User Data/Default/Favicons` SQLite DB (read-only) |
 | Activation | `osascript` → Arc AppleScript `select` + `focus`; fallback `open <url>` |
 | Saved links | Obsidian vault Markdown under `Bookmark/` |
+| Jump templates | `Bookmark/00-Jumps.md` (seeded with examples on first run) |
 | Save endpoint | `127.0.0.1:8787`, token-authenticated |
 | Summaries | your own LLM endpoints, routed by host (intranet vs public) |
 
