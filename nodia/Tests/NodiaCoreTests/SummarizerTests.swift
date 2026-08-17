@@ -290,11 +290,51 @@ final class SummarizerTests: XCTestCase {
                        "模型返回了空内容")
     }
 
-    /// The budget has to leave room for reasoning *and* the answer. 1024 was
-    /// measured to be too small for a 6000-character page.
-    func testTokenBudgetLeavesRoomForReasoning() {
-        XCTAssertGreaterThanOrEqual(Summarizer.maxTokens, 4096,
-                                    "思考与正文共用额度，给小了就只剩思考")
+    /// The budget has to cover the tail, not the average. Summarizing the same
+    /// 6000-character page four times produced 764, 1335, 1835 and 4313 output
+    /// tokens — so anything at or below ~4096 truncates some runs.
+    func testTokenBudgetCoversTheMeasuredTail() {
+        XCTAssertGreaterThan(Summarizer.maxTokens, 4313,
+                            "实测最大一次就用了 4313 token，额度必须高于观测尾部")
+        XCTAssertLessThan(Summarizer.fallbackMaxTokens, Summarizer.maxTokens)
+    }
+
+    /// max_tokens is an output cap, not the context window, and every endpoint
+    /// sets its own ceiling — Ark refuses anything above 128000. Being wrong
+    /// about a ceiling should cost one retry, not every summary.
+    func testOnlyARejectedBudgetIsWorthRetrying() {
+        let arkBody = """
+        {"error":{"message":"The parameter `max_tokens` specified in the request is not \
+        valid: integer above maximum value, expected a value <= 128000"}}
+        """
+        XCTAssertTrue(Summarizer.rejectedTheTokenBudget(code: 400, body: arkBody))
+
+        // A second identical request won't fix any of these.
+        XCTAssertFalse(Summarizer.rejectedTheTokenBudget(
+            code: 400, body: #"{"error":{"message":"model not found"}}"#))
+        XCTAssertFalse(Summarizer.rejectedTheTokenBudget(code: 401, body: "unauthorized"))
+        XCTAssertFalse(Summarizer.rejectedTheTokenBudget(code: 429, body: "rate limited"))
+        XCTAssertFalse(Summarizer.rejectedTheTokenBudget(code: 500, body: "max_tokens"),
+                       "只有 400 才是参数被拒，5xx 是服务端问题")
+    }
+
+    func testRequestCarriesTheBudgetItWasGiven() throws {
+        let endpoint = Summarizer.Endpoint(
+            url: "https://x.test/v1/messages", model: "m",
+            keyAccount: "unused", wire: .anthropic
+        )
+        let request = Summarizer.buildRequest(
+            endpoint: endpoint, key: "k",
+            url: URL(string: "https://x.test/v1/messages")!,
+            title: "T", content: "正文", maxTokens: 8192
+        )
+        let body = try XCTUnwrap(request.httpBody)
+        let json = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["max_tokens"] as? Int, 8192)
+
+        // The slow tail measured 39.9s; a 60s timeout left too little margin.
+        XCTAssertGreaterThanOrEqual(request.timeoutInterval, 120)
     }
 
     /// Settings saved before the protocol picker existed decode without the

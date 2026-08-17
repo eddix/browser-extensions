@@ -171,40 +171,62 @@ public struct Summarizer: Sendable {
         }
         let key = SecretStore.get(endpoint.keyAccount) ?? ""
 
-        let request = Self.buildRequest(
-            endpoint: endpoint,
-            key: key,
-            url: requestURL,
-            title: title,
-            content: String(content.prefix(6000))
-        )
+        // Second pass only happens if the endpoint rejects the budget itself.
+        for budget in [Self.maxTokens, Self.fallbackMaxTokens] {
+            let request = Self.buildRequest(
+                endpoint: endpoint,
+                key: key,
+                url: requestURL,
+                title: title,
+                content: String(content.prefix(6000)),
+                maxTokens: budget
+            )
 
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                // The body carries the actual reason (bad model name, missing
-                // header, rejected parameter) — without it every failure looks
-                // the same.
-                let detail = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-                Log.write("summary failed: HTTP \(code) for \(url) — \(detail)")
-                return .failed(reason: "模型返回 HTTP \(code)")
-            }
-            switch Self.extractText(wire: endpoint.wire, data: data) {
-            case .text(let text):
-                guard let result = Self.parseResult(text) else {
-                    Log.write("summary failed: empty reply for \(url)")
-                    return .failed(reason: "模型返回了空内容")
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                    // The body carries the actual reason (bad model name, missing
+                    // header, rejected parameter) — without it every failure looks
+                    // the same.
+                    let detail = String(data: data, encoding: .utf8)?.prefix(300) ?? ""
+                    Log.write("summary failed: HTTP \(code) at max_tokens=\(budget) for \(url) — \(detail)")
+                    // A rejected budget is the one failure a second attempt can
+                    // fix. Everything else — bad key, unknown model — would fail
+                    // identically, so don't spend another round trip on it.
+                    if Self.rejectedTheTokenBudget(code: code, body: String(detail)),
+                       budget != Self.fallbackMaxTokens {
+                        continue
+                    }
+                    return .failed(reason: "模型返回 HTTP \(code)")
                 }
-                return .summarized(result)
-            case .failed(let reason, let detail):
-                Log.write("summary failed: \(detail) for \(url)")
-                return .failed(reason: reason)
+                switch Self.extractText(wire: endpoint.wire, data: data) {
+                case .text(let text):
+                    guard let result = Self.parseResult(text) else {
+                        Log.write("summary failed: empty reply for \(url)")
+                        return .failed(reason: "模型返回了空内容")
+                    }
+                    return .summarized(result)
+                case .failed(let reason, let detail):
+                    Log.write("summary failed: \(detail) for \(url)")
+                    return .failed(reason: reason)
+                }
+            } catch {
+                Log.write("summary failed: \(error.localizedDescription)")
+                return .failed(reason: error.localizedDescription)
             }
-        } catch {
-            Log.write("summary failed: \(error.localizedDescription)")
-            return .failed(reason: error.localizedDescription)
         }
+        return .failed(reason: "模型不接受这个输出长度上限")
+    }
+
+    /// Whether a 400 is the endpoint objecting to `max_tokens` specifically.
+    ///
+    /// Matched on the body because the wire has no dedicated code for it —
+    /// Ark answers `integer above maximum value, expected a value <= 128000`.
+    /// Deliberately narrow: a false positive only costs one retry, but treating
+    /// every 400 as retryable would double the cost of every real mistake.
+    static func rejectedTheTokenBudget(code: Int, body: String) -> Bool {
+        code == 400 && body.contains("max_tokens")
     }
 
     // MARK: - Wire format
@@ -223,18 +245,25 @@ public struct Summarizer: Sendable {
     专有名词保留原文（中英文均可）。日后我可能凭其中任何一个想起这个页面。
     """
 
-    /// Far more than the answer needs, because on a thinking-capable model
-    /// `max_tokens` caps reasoning *and* reply together — and reasoning goes
-    /// first, so a tight budget is spent entirely on thinking and returns an
-    /// empty text block.
+    /// Vastly more than the answer needs, and that is the point.
     ///
-    /// Measured against `glm-5.3` (which can't be told to stop thinking) on a
-    /// 6000-character page: 1024 and 2048 both came back `stop_reason:
-    /// max_tokens` with zero characters of summary; 4096 finished in 894. Note
-    /// the reasoning length is not stable — the same request thought for 4485
-    /// characters under a 2048 budget and 1823 under a 4096 one — so this is
-    /// headroom, not a limit anyone should tune down to fit.
-    static let maxTokens = 4096
+    /// `max_tokens` is a **cap, not a reservation** — an unused budget costs
+    /// nothing. It is also not the context window: the window covers input
+    /// plus output, while this bounds output alone and every endpoint caps it
+    /// far lower (Ark rejects anything above 128000 for `glm-5.3`).
+    ///
+    /// It has to be generous because on a thinking-capable model it covers
+    /// reasoning *and* reply, reasoning goes first, and reasoning length is
+    /// wildly unstable. The same 6000-character page, summarized four times:
+    /// 764, 1335, 1835, 4313 output tokens — a 5.6× spread, 8.7s to 39.9s.
+    /// Any budget fitted to the average silently truncates the tail, which is
+    /// what 1024 was doing: a full thinking block and an empty text one.
+    static let maxTokens = 32768
+
+    /// Tried once if the endpoint rejects the budget above as too large.
+    /// Smaller gateways cap output far below Ark's 128000, and being wrong
+    /// about a cap shouldn't cost every summary.
+    static let fallbackMaxTokens = 8192
 
     /// Completes a configured address into the endpoint actually being called.
     ///
@@ -274,11 +303,15 @@ public struct Summarizer: Sendable {
         key: String,
         url: URL,
         title: String,
-        content: String
+        content: String,
+        maxTokens: Int = Summarizer.maxTokens
     ) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 60
+        // Reasoning time swings as much as reasoning length: the same page
+        // measured 8.7s to 39.9s. At 60s the slow tail would time out, which
+        // looks identical to a broken endpoint.
+        request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let userText = "标题：\(title)\n\n正文：\n\(content)"
@@ -295,7 +328,7 @@ public struct Summarizer: Sendable {
                     ["role": "system", "content": Self.instruction],
                     ["role": "user", "content": userText],
                 ],
-                "max_tokens": Self.maxTokens,
+                "max_tokens": maxTokens,
                 "temperature": 0.3,
             ]
 
@@ -311,7 +344,7 @@ public struct Summarizer: Sendable {
             // deliberately absent: current Claude models reject it with a 400.
             body = [
                 "model": endpoint.model,
-                "max_tokens": Self.maxTokens,
+                "max_tokens": maxTokens,
                 "system": Self.instruction,
                 "messages": [["role": "user", "content": userText]],
             ]
