@@ -38,6 +38,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.appearance = themeStore.resolved.nsAppearance
+        panel.alphaValue = themeStore.theme.opacity
         center(panel)
         panel.makeKeyAndOrderFront(nil)
         installKeyMonitor()
@@ -114,6 +115,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
                 case 32: self.model.query = ""; return nil                                           // ⌘U clear field
                 case 2:  self.model.toggleMode(); return nil                                         // ⌘D duplicates
                 case 5:  self.model.toggleDomainMode(); return nil                                   // Cmd+G by-domain
+                case 17: self.model.toggleJumpMode(); return nil                                     // ⌘T jump templates
                 default: break
                 }
             }
@@ -150,6 +152,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         else if !model.query.isEmpty { model.query = "" }
         else if model.mode == .duplicates { model.toggleMode() }
         else if model.mode == .byDomain { model.toggleDomainMode() }
+        else if model.mode == .jumps { model.toggleJumpMode() }
         else { hide() }
     }
 

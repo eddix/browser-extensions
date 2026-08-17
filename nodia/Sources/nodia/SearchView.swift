@@ -32,6 +32,7 @@ struct SearchView: View {
                     switch mode {
                     case .duplicates: duplicateList(r)
                     case .byDomain:   domainList(r)
+                    case .jumps:      jumpList(r)
                     case .search:     searchList(r)
                     }
                 }
@@ -65,6 +66,7 @@ struct SearchView: View {
             case .search:     placeholder = "搜索标签页…"
             case .duplicates: placeholder = "筛选重复…"
             case .byDomain:   placeholder = "按域名筛选…"
+            case .jumps:      placeholder = "筛选跳转…"
             }
         }
         return HStack(spacing: 10) {
@@ -75,6 +77,7 @@ struct SearchView: View {
                 switch mode {
                 case .duplicates: modeChip("重复标签", icon: "rectangle.on.rectangle", r)
                 case .byDomain:   modeChip("按域名", icon: "square.grid.2x2", r)
+                case .jumps:      modeChip("跳转", icon: "arrow.turn.down.right", r)
                 case .search:     EmptyView()
                 }
             }
@@ -155,6 +158,45 @@ struct SearchView: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 6)
+                    }
+                    .onChange(of: model.selectedIndex) { _, i in
+                        withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(i, anchor: .center) }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Every jump template. Plain search surfaces these too, but only once
+    /// you know one exists — this is the browsable answer.
+    private func jumpList(_ r: ResolvedTheme) -> some View {
+        let rows = model.jumpResults
+        return Group {
+            if rows.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 28)).foregroundStyle(r.palette.secondary)
+                    Text(model.query.isEmpty ? "还没有跳转模板" : "无匹配")
+                        .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
+                    if model.query.isEmpty {
+                        Text("在收藏库的 Bookmark/00-Jumps.md 里添加")
+                            .font(r.captionFont).foregroundStyle(r.palette.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                                TabRow(tab: row, icon: nil, selected: index == model.selectedIndex,
+                                       query: model.query, theme: r)
+                                    .id(index)
+                                    .onTapGesture { onActivate(row) }
+                            }
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 6)
                     }
                     .onChange(of: model.selectedIndex) { _, i in
                         withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(i, anchor: .center) }
@@ -340,12 +382,17 @@ struct SearchView: View {
                 Spacer()
                 KeyHint(label: "打开", keys: ["⏎"], theme: r)
                 KeyHint(label: "返回", keys: ["⌘", "G"], theme: r)
+            case .jumps:
+                Text("\(model.jumpResults.count) 个跳转模板")
+                Spacer()
+                KeyHint(label: "填参数", keys: ["⏎"], theme: r)
+                KeyHint(label: "返回", keys: ["⌘", "T"], theme: r)
             case .search:
                 Text("\(model.results.count) 个标签")
                 Spacer()
                 KeyHint(label: "打开", keys: ["⏎"], theme: r)
+                KeyHint(label: "跳转", keys: ["⌘", "T"], theme: r)
                 KeyHint(label: "去重", keys: ["⌘", "D"], theme: r)
-                KeyHint(label: "分组", keys: ["⌘", "G"], theme: r)
             }
         }
         .font(r.captionFont)
@@ -370,8 +417,11 @@ private struct TabRow: View {
 
     var body: some View {
         // Highlight fields: title, the detail line (URL, or a saved link's
-        // summary), and the short right-hand tag.
-        let m = MatchHighlight.matches(query: query, fields: [tab.title, tab.detailLine, tab.spaceTitle])
+        // summary), and the right-hand tag. A tab's tag is its Space name,
+        // which no longer participates in matching — highlighting it would
+        // claim a match that didn't happen.
+        let taggable = tab.origin == .arcTab ? "" : tab.spaceTitle
+        let m = MatchHighlight.matches(query: query, fields: [tab.title, tab.detailLine, taggable])
         HStack(spacing: 10) {
             favicon(icon, theme: theme)
             VStack(alignment: .leading, spacing: 1) {

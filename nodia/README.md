@@ -13,7 +13,8 @@ from one prompt.
 - **Jump templates** — one entry for a whole family of platform URLs. Search
   its name, then fill the parameters one at a time (candidates are a list;
   anything without one takes free input), and it opens.
-- **⌘D** duplicate clustering, **⌘G** by-domain browsing.
+- **⌘T** browse every jump template, **⌘D** duplicate clustering, **⌘G**
+  by-domain browsing.
 - Themeable frosted-glass UI (7 palettes, 4 fonts, size) via the settings
   window. Menu-bar icon: left-click to search, right-click for Settings / Quit.
 
@@ -130,6 +131,10 @@ template collapses the family into one entry:
   - window: now-1h, now-6h, now-24h
   - keywords: metrics, 监控
 ```
+
+**⌘T** lists every template — plain search finds them too, but only if you
+remember one exists, and "what can I jump to?" isn't a question search can
+answer.
 
 Any `{name}` is a parameter. A field of the same name lists its candidates;
 a parameter with no such field takes free input (a service, say). Placeholders can

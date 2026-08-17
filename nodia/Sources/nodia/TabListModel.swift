@@ -6,7 +6,7 @@ import NodiaCore
 /// derived from `query` + the loaded tabs, so the search field, list, and count
 /// can never drift out of sync (no `@Published` mutated inside another's didSet).
 final class TabListModel: ObservableObject {
-    enum Mode { case search, duplicates, byDomain }
+    enum Mode { case search, duplicates, byDomain, jumps }
 
     @Published var query: String = "" {
         didSet { if selectedIndex != 0 { selectedIndex = 0 } }
@@ -192,6 +192,7 @@ final class TabListModel: ObservableObject {
         case .search:     count = results.count
         case .duplicates: count = clusters.count
         case .byDomain:   count = flatDomainTabs.count
+        case .jumps:      count = jumpResults.count
         }
         guard count > 0 else { return }
         selectedIndex = max(0, min(count - 1, selectedIndex + delta))
@@ -209,11 +210,32 @@ final class TabListModel: ObservableObject {
         selectedIndex = 0
     }
 
+    /// ⌘T: browse the jump templates. They already surface in plain search,
+    /// but only if you remember one exists — this is the answer to "what can
+    /// I jump to?", which is not a question search can answer.
+    func toggleJumpMode() {
+        mode = (mode == .jumps) ? .search : .jumps
+        query = ""
+        selectedIndex = 0
+    }
+
+    /// Templates in ⌘T mode, filtered by a plain substring so browsing stays
+    /// predictable — this list is short enough not to need ranking.
+    var jumpResults: [TabEntry] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return jumpRows }
+        return jumpRows.filter {
+            $0.title.lowercased().contains(q) || $0.note.lowercased().contains(q)
+                || $0.url.lowercased().contains(q)
+        }
+    }
+
     var selectedTab: TabEntry? {
         let list: [TabEntry]
         switch mode {
         case .search:     list = results
         case .byDomain:   list = flatDomainTabs
+        case .jumps:      list = jumpResults
         case .duplicates: return nil   // duplicates mode selects clusters, not tabs
         }
         return list.indices.contains(selectedIndex) ? list[selectedIndex] : nil

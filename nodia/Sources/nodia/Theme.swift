@@ -6,8 +6,29 @@ struct Theme: Codable, Equatable {
     var paletteID: String
     var fontID: String
     var baseSize: Double
+    /// Whole-panel opacity. Slightly see-through keeps the panel feeling like
+    /// an overlay rather than a window that took over the screen.
+    var opacity: Double
 
-    static let `default` = Theme(paletteID: "system", fontID: "system", baseSize: 13)
+    static let `default` = Theme(
+        paletteID: "system", fontID: "system", baseSize: 13, opacity: 0.90
+    )
+
+    // Themes saved before opacity existed decode without it.
+    init(paletteID: String, fontID: String, baseSize: Double, opacity: Double = 0.90) {
+        self.paletteID = paletteID
+        self.fontID = fontID
+        self.baseSize = baseSize
+        self.opacity = opacity
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        paletteID = try c.decodeIfPresent(String.self, forKey: .paletteID) ?? "system"
+        fontID = try c.decodeIfPresent(String.self, forKey: .fontID) ?? "system"
+        baseSize = try c.decodeIfPresent(Double.self, forKey: .baseSize) ?? 13
+        opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 0.90
+    }
 }
 
 enum FontChoice: String, CaseIterable, Identifiable {
