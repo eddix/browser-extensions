@@ -14,8 +14,7 @@ enum ActivationResult {
 enum Activator {
     static func activate(_ tab: TabEntry) -> ActivationResult {
         // A saved link has no live tab to find. Skip the AppleScript sweep —
-        // it would walk every Space just to fail, costing seconds. (A jump
-        // template never reaches here: it has parameters to fill first.)
+        // it would walk every Space just to fail, costing seconds.
         if tab.origin != .arcTab {
             guard let url = URL(string: tab.url) else { return .failed }
             NSWorkspace.shared.open(url)

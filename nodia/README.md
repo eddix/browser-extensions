@@ -327,8 +327,14 @@ See [DESIGN.md](./DESIGN.md) for the tab-parsing details.
 ```sh
 swift run nodia              # run from source
 swift run nodia-probe        # headless check: tabs, favicons, vault index
-swift test                   # 189 tests, incl. HTTP boundary + summary routing
+swift test                   # 190 tests, incl. HTTP boundary + summary routing
+python3 tools/scrub-check.py # 内网标识词闸门，推之前跑
 ```
+
+这是公开仓库，示例里的域名和平台名都得是通用的。`scrub-check.py` 扫 git 会发布的
+每个文件，命中就打印 `文件:行号` 并以非零退出 —— 词表在脚本里，改动会出现在 diff 里。
+上一次泄漏不是因为没扫，是因为扫描命令每次手打，词表在重写时丢了一项，检查自己
+悄悄退化了。
 
 ## Install as an app
 

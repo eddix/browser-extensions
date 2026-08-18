@@ -1,4 +1,5 @@
 import XCTest
+import Network
 @testable import NodiaCore
 
 /// The server guards a loopback port that script on any visited page can
@@ -51,6 +52,45 @@ final class LocalHTTPServerTests: XCTestCase {
         return try XCTUnwrap(result)
     }
 
+    /// Writes bytes at the socket and returns whatever comes back.
+    ///
+    /// URLSession is not a way to test a parser: it composes the request itself
+    /// and won't emit a header it considers impossible, which is precisely the
+    /// class of request that matters here.
+    private func rawRequest(_ text: String) -> String {
+        let conn = NWConnection(host: "127.0.0.1",
+                                port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        let done = expectation(description: "raw reply")
+        var reply = Data()
+        var finished = false
+        func settle() {
+            guard !finished else { return }
+            finished = true
+            done.fulfill()
+        }
+        func pump() {
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { chunk, _, isComplete, error in
+                if let chunk { reply.append(chunk) }
+                if isComplete || error != nil { settle() } else { pump() }
+            }
+        }
+        conn.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                conn.send(content: Data(text.utf8), completion: .contentProcessed { _ in })
+                pump()
+            case .failed, .cancelled:
+                settle()
+            default:
+                break
+            }
+        }
+        conn.start(queue: .global())
+        wait(for: [done], timeout: 5)
+        conn.cancel()
+        return String(data: reply, encoding: .utf8) ?? ""
+    }
+
     // MARK: - The boundary
 
     func testRejectsRequestWithoutToken() throws {
@@ -90,6 +130,22 @@ final class LocalHTTPServerTests: XCTestCase {
         let r = try request("/api/check-url?url=https%3A%2F%2Fe.com%2Fa", token: token)
         XCTAssertEqual(r.status, 200)
         XCTAssertTrue(r.body.contains("/api/check-url"))
+    }
+
+    /// The parser runs before the token check, so anything that can kill it can
+    /// be reached by any process able to open a loopback socket. This request
+    /// used to take the whole app down: `Content-Length: -1` walked past the
+    /// "have we got the body yet" guard and into `prefix`, which traps on a
+    /// negative count — measured end to end as exit 133.
+    ///
+    /// The second half of the test is the half that matters. A server that
+    /// answers 400 and then dies has not been fixed.
+    func testNegativeContentLengthIsRejectedRatherThanCrashing() throws {
+        let reply = rawRequest("POST /api/links HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: -1\r\n\r\n")
+        XCTAssertTrue(reply.hasPrefix("HTTP/1.1 400"),
+                      "畸形的 Content-Length 应当被拒绝，实际收到：\(reply.prefix(40))")
+        XCTAssertEqual(try request("/api/health", token: token).status, 200,
+                       "服务应当还活着")
     }
 
     /// Extracted page text is far bigger than one TCP segment; the reader must

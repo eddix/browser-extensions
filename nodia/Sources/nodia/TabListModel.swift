@@ -142,6 +142,12 @@ final class TabListModel: ObservableObject {
         filling = nil
         query = ""
         selectedIndex = 0
+        // The form took the keyboard away from the search field, and nothing
+        // gives it back on the way out — `show()` is the only other place that
+        // asks for focus, and esc doesn't go through it. Without this you land
+        // on the list with the caret nowhere and have to click the field before
+        // you can type again.
+        requestFocus()
     }
 
     /// Re-read the sidebar (cheap; ~ms for a few hundred tabs).

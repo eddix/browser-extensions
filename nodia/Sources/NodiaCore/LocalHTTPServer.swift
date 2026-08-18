@@ -132,14 +132,17 @@ public final class LocalHTTPServer: @unchecked Sendable {
 
             // Keep reading until headers are complete and the declared body has
             // arrived — extracted page text easily spans several TCP segments.
-            if let request = Self.parse(buffer) {
+            switch Self.parse(buffer) {
+            case .request(let request):
                 self.route(request) { response in
                     self.send(response, on: conn, origin: request.origin)
                 }
-            } else if isComplete {
-                conn.cancel()
-            } else {
-                self.receive(conn, buffer: buffer)
+            case .malformed:
+                // No origin: a request we can't parse has no header we'd trust
+                // to hand out a CORS grant with.
+                self.send(.error(400, "malformed request"), on: conn, origin: nil)
+            case .incomplete:
+                if isComplete { conn.cancel() } else { self.receive(conn, buffer: buffer) }
             }
         }
     }
@@ -179,14 +182,33 @@ public final class LocalHTTPServer: @unchecked Sendable {
 
     // MARK: - Parsing
 
-    private static func parse(_ data: Data) -> Request? {
-        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return nil }
-        guard let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8) else { return nil }
+    /// Three outcomes, not two: a request, bytes still on the way, or a request
+    /// we refuse to serve.
+    ///
+    /// The third case is a safety boundary, not tidiness. Parsing runs *before*
+    /// the token check, so every line of it is reachable by any process that can
+    /// open a loopback socket — one hand-written request, and whatever the
+    /// parser does next it does on the whole app's behalf. A negative
+    /// `Content-Length` was the proof: `body.count >= declared` is trivially
+    /// true against a negative number, so the value flowed on into `prefix`,
+    /// which traps, and the app died with exit 133 for anyone who asked.
+    /// Clamping to zero would have stopped the crash and then answered as if
+    /// nothing were wrong; a length that cannot exist is a request we have no
+    /// business guessing the meaning of.
+    private enum Parsed {
+        case request(Request)
+        case incomplete
+        case malformed
+    }
+
+    private static func parse(_ data: Data) -> Parsed {
+        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return .incomplete }
+        guard let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8) else { return .incomplete }
 
         var lines = head.components(separatedBy: "\r\n")
-        guard !lines.isEmpty else { return nil }
+        guard !lines.isEmpty else { return .incomplete }
         let requestLine = lines.removeFirst().split(separator: " ")
-        guard requestLine.count >= 2 else { return nil }
+        guard requestLine.count >= 2 else { return .incomplete }
 
         let method = String(requestLine[0])
         let target = String(requestLine[1])
@@ -200,8 +222,9 @@ public final class LocalHTTPServer: @unchecked Sendable {
         }
 
         let declared = Int(headers["content-length"] ?? "0") ?? 0
+        guard declared >= 0 else { return .malformed }
         let body = data[headerEnd.upperBound...]
-        guard body.count >= declared else { return nil }  // wait for the rest
+        guard body.count >= declared else { return .incomplete }  // wait for the rest
 
         var path = target
         var query: [String: String] = [:]
@@ -215,14 +238,14 @@ public final class LocalHTTPServer: @unchecked Sendable {
             }
         }
 
-        return Request(
+        return .request(Request(
             method: method,
             path: path,
             query: query,
             body: Data(body.prefix(declared)),
             origin: headers["origin"],
             authorization: headers["authorization"]
-        )
+        ))
     }
 
     private static func reason(_ status: Int) -> String {

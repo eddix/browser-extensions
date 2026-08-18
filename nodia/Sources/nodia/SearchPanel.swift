@@ -87,7 +87,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         let root = SearchView(
             model: model,
             themeStore: themeStore,
-            onActivate: { [weak self] tab in self?.activate(tab) },
+            onActivate: { [weak self] row in self?.activate(row: row) },
             onDedupeCluster: { [weak self] cluster in
                 self?.confirmAndClose(cluster.duplicates,
                                       summary: "“\(cluster.keeper.title)” 的 \(cluster.duplicates.count) 个重复")
@@ -221,10 +221,23 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
 
     private func activateSelected() {
         guard let tab = model.selectedTab else { return }
-        guard let template = model.template(for: tab) else { return activate(tab) }
+        activate(row: tab)
+    }
+
+    /// The single door every row goes through, whether you pressed ⏎ or clicked
+    /// it.
+    ///
+    /// Two doors is how the click broke: it went straight to `Activator`, which
+    /// treats `tab.url` as a URL, and for a template that string is still a
+    /// template. A placeholder in the host position makes `URL(string:)` return
+    /// nil and the click does nothing at all; one in the path survives as
+    /// percent-encoded braces and opens a real 404. Neither says a word about
+    /// the parameter form you were supposed to get.
+    private func activate(row: TabEntry) {
+        guard let template = model.template(for: row) else { return activateTab(row) }
         // A template with parameters isn't a URL yet — collect them first. One
         // without any already is, so asking would be a form with nothing on it.
-        if model.beginFilling(template) { return }
+        if model.beginFilling(row) { return }
         guard let url = URL(string: template.urlTemplate) else { return }
         model.quickOpenState.recordOpen(template: template, values: [:])
         openQuickOpen(url)
@@ -262,7 +275,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         Log.write("quick-open: opened \(url.absoluteString)")
     }
 
-    private func activate(_ tab: TabEntry) {
+    private func activateTab(_ tab: TabEntry) {
         hide()
         if case .permissionDenied = Activator.activate(tab) {
             presentPermissionAlert()
