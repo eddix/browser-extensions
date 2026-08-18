@@ -26,8 +26,18 @@ public struct QuickOpenForm {
     /// collapses under its own cursor: arrow onto "VA", the list refilters to
     /// the one row matching "VA", and the next ↓ has nowhere left to go.
     private var filter: String
-    /// Highlighted row in the candidate list.
-    public private(set) var highlighted: Int = 0
+    /// Highlighted row in the candidate list, or nothing highlighted at all.
+    ///
+    /// Optional rather than an index that starts at zero, because "the first
+    /// row" and "no row" are different states and merging them handed out
+    /// values nobody chose. Typing reset the index to 0 while leaving it
+    /// *meaning* something, so ⇥ out of a field where you'd typed `123`
+    /// replaced it with whichever remembered value merely contained those
+    /// digits — history matches on `contains`, so `12345` sits in that list.
+    /// It showed on screen too: reopen a form whose remembered value isn't the
+    /// first candidate and the highlight box sat on a row the field disagreed
+    /// with. A highlight exists once you put it somewhere, and not before.
+    public private(set) var highlighted: Int?
 
     public init(template: QuickOpenTemplate, state: QuickOpenState) {
         self.template = template
@@ -98,7 +108,9 @@ public struct QuickOpenForm {
         draft = text
         filter = text
         values[parameter] = Self.resolve(text, of: parameter, in: template)
-        highlighted = 0
+        // Typing is not choosing. The list refilters under the cursor, so the
+        // row it was on is not the row that position now names.
+        highlighted = nil
     }
 
     /// Takes a candidate into the focused field — the visible text as well as
@@ -111,18 +123,25 @@ public struct QuickOpenForm {
 
     /// ↑↓. Moving the highlight *is* choosing: the field and the URL update as
     /// you go, so there's never a question about what ⏎ would open.
+    ///
+    /// From nothing highlighted, the first press lands on the first row instead
+    /// of the second — there's no cursor to step off, so "next" means the top
+    /// of the list, and the row you can see is the row you get.
     public mutating func moveHighlight(_ delta: Int) {
         let list = candidates
         guard !list.isEmpty else { return }
-        highlighted = max(0, min(list.count - 1, highlighted + delta))
-        take(list[highlighted])
+        let from = highlighted ?? (delta > 0 ? -1 : 0)
+        let landing = max(0, min(list.count - 1, from + delta))
+        highlighted = landing
+        take(list[landing])
     }
 
     /// ⇥ — next field, wrapping. Keeps whatever the highlight was sitting on,
-    /// so arrowing to a candidate and tabbing away doesn't discard it.
+    /// so arrowing to a candidate and tabbing away doesn't discard it. Nothing
+    /// highlighted means nothing to keep: what you typed stays what you typed.
     public mutating func focusNext() {
         let list = candidates
-        if list.indices.contains(highlighted) { take(list[highlighted]) }
+        if let highlighted, list.indices.contains(highlighted) { take(list[highlighted]) }
         focusField((focus + 1) % max(parameters.count, 1))
     }
 
@@ -131,9 +150,11 @@ public struct QuickOpenForm {
         focus = index
         draft = Self.display(values[parameter] ?? "", of: parameter, in: template)
         // A fresh field starts by showing its whole list, not the leftovers of
-        // what you typed into the previous one.
+        // what you typed into the previous one, and with nothing picked out of
+        // it — the value here came from what you last used, which is a
+        // different question from where the cursor is.
         filter = ""
-        highlighted = 0
+        highlighted = nil
     }
 
     // MARK: - Value ↔ text

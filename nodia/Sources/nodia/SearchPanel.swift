@@ -35,6 +35,13 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
 
     func show() {
         model.reload()
+        // Every other piece of panel state gets reset here; the form used to be
+        // the exception, and it outranks the mode in the view. So walking away
+        // from a half-filled template — esc out of the panel, or click
+        // elsewhere and let it resign key — meant the next time you hit the
+        // hotkey you were handed that same abandoned form instead of a search
+        // field, with no way to tell why.
+        model.cancelFilling()
         model.query = ""
         model.mode = .search
         model.selectedIndex = 0
@@ -241,7 +248,13 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         // A template with parameters isn't a URL yet — collect them first. One
         // without any already is, so asking would be a form with nothing on it.
         if model.beginFilling(row) { return }
-        guard let url = URL(string: template.urlTemplate) else { return }
+        // Through `expand` rather than straight to `URL(string:)`, so both ways
+        // of opening a template judge the same config by the same rule.
+        // `URL(string:)` alone accepts things that can't be opened — anything
+        // without a host sails through it — and the score was booked before
+        // anyone found out, so a typo'd template climbed the ranking on
+        // openings that never happened.
+        guard let url = template.expand([:]) else { return }
         model.quickOpenState.recordOpen(template: template, values: [:])
         openQuickOpen(url)
     }

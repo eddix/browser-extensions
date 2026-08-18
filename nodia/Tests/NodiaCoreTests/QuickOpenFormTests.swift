@@ -121,6 +121,10 @@ final class QuickOpenFormTests: XCTestCase {
 
         f.moveHighlight(1)
         XCTAssertEqual(f.candidates.count, 3, "光标移动不该重新筛选列表")
+        XCTAssertEqual(f.values["region"], "sg", "还没有高亮时，第一下 ↓ 落在第一条")
+
+        f.moveHighlight(1)
+        XCTAssertEqual(f.candidates.count, 3)
         XCTAssertEqual(f.values["region"], "us")
 
         f.moveHighlight(1)
@@ -153,6 +157,8 @@ final class QuickOpenFormTests: XCTestCase {
         f.type("pr")
         XCTAssertEqual(f.candidates.map(\.label), ["prod", "preprod"])
         f.moveHighlight(1)
+        XCTAssertEqual(f.values["env"], "prod")
+        f.moveHighlight(1)
         XCTAssertEqual(f.values["env"], "ppe")
         f.moveHighlight(1)
         XCTAssertEqual(f.highlighted, 1, "筛完只剩两条，走不到第三条")
@@ -174,9 +180,54 @@ final class QuickOpenFormTests: XCTestCase {
     func testTabKeepsTheHighlightedCandidate() {
         var f = form()
         f.focusField(0)
-        f.moveHighlight(1)
+        f.moveHighlight(1)   // first row, SG
+        f.moveHighlight(1)   // second row, VA — has to differ from the prefill to prove anything
         f.focusNext()
         XCTAssertEqual(f.values["region"], "us")
+    }
+
+    /// The other half of that rule, and the bug it was hiding: ⇥ only keeps a
+    /// candidate you actually put the cursor on. `highlighted` used to be an
+    /// `Int` that typing reset to 0 without meaning "row 0", so tabbing out of
+    /// a field where you'd typed `123` swapped in a remembered value that
+    /// merely *contained* it — history matches on `contains`, not on prefix.
+    func testTabbingAwayKeepsWhatYouTypedRatherThanACandidate() {
+        state.recordOpen(template: ledger, values: ["region": "sg", "task_id": "12345"])
+        var f = form()
+        f.focusField(1)
+        f.type("123")
+        XCTAssertEqual(f.candidates.map(\.value), ["12345"],
+                       "前提：那条历史确实还在候选里，只是不该被自动选中")
+        f.focusNext()
+        XCTAssertEqual(f.values["task_id"], "123")
+        XCTAssertEqual(f.text(of: "task_id"), "123")
+    }
+
+    /// Nothing is highlighted until you move the cursor, so the highlight can
+    /// never sit on a row that contradicts the field beside it — which is what
+    /// you saw whenever the value you last used wasn't the first candidate.
+    func testNothingIsHighlightedUntilYouMoveTheCursor() {
+        state.recordOpen(template: ledger, values: ["region": "eu-central-1", "task_id": "7"])
+        var f = form()
+        XCTAssertNil(f.highlighted)
+        XCTAssertEqual(f.text(of: "region"), "EU", "上次用的不是第一个候选")
+
+        f.focusField(0)
+        XCTAssertNil(f.highlighted, "换字段也不该凭空高亮一行")
+        f.moveHighlight(1)
+        XCTAssertEqual(f.highlighted, 0)
+    }
+
+    /// Typing drops the highlight rather than resetting it to the top row: the
+    /// list refilters as you type, so whatever the cursor was on isn't what
+    /// that position names any more.
+    func testTypingClearsTheHighlight() {
+        var f = form()
+        f.focusField(0)
+        f.moveHighlight(1)
+        XCTAssertNotNil(f.highlighted)
+        f.type("e")
+        XCTAssertNil(f.highlighted)
     }
 
     /// A new field shows its own whole list, not what you typed into the last

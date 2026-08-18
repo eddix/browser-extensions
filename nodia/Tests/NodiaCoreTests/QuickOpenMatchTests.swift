@@ -22,6 +22,40 @@ final class QuickOpenMatchTests: XCTestCase {
         XCTAssertNotNil(hit)
     }
 
+    /// DNS doesn't care about the case of a hostname and neither does the
+    /// browser, so a tab opened from a link that shouted the host is the same
+    /// page a template builds in lowercase. Treating them as two left a second
+    /// window open on a page you already had.
+    func testHostCaseDoesNotCountAsADifferentPage() throws {
+        let hit = QuickOpenMatch.liveTab(for: try url("https://console.example.com/metrics"),
+                                         in: [tab("https://Console.EXAMPLE.com/metrics")])
+        XCTAssertNotNil(hit)
+        XCTAssertNotNil(
+            QuickOpenMatch.liveTab(for: try url("HTTPS://console.example.com/metrics"),
+                                   in: [tab("https://console.example.com/metrics")]),
+            "scheme 同理，也是大小写无关的"
+        )
+    }
+
+    /// But only the host. Everything after it is case-*sensitive*, and a
+    /// blanket `lowercased()` would have collapsed two different objects onto
+    /// one another — the reason this isn't just one call.
+    func testEverythingAfterTheHostStaysCaseSensitive() throws {
+        XCTAssertNil(
+            QuickOpenMatch.liveTab(for: try url("https://example.com/detail/AbC"),
+                                   in: [tab("https://example.com/detail/abc")]),
+            "路径大小写不同就是不同的对象"
+        )
+        XCTAssertNil(
+            QuickOpenMatch.liveTab(for: try url("https://example.com/m?service=Team.Shop"),
+                                   in: [tab("https://example.com/m?service=team.shop")])
+        )
+        XCTAssertNil(
+            QuickOpenMatch.liveTab(for: try url("https://ledger.example.net/#/sg/detail/Ab"),
+                                   in: [tab("https://ledger.example.net/#/sg/detail/ab")])
+        )
+    }
+
     /// The trap that ruled out reusing `VaultStore.normalize`: it truncates at
     /// `#`, so every task on a fragment-routed platform would look like the
     /// same page. Asking for task 1 would have switched you to task 2.

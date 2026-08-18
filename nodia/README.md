@@ -328,7 +328,7 @@ See [DESIGN.md](./DESIGN.md) for the tab-parsing details.
 ```sh
 swift run nodia              # run from source
 swift run nodia-probe        # headless check: tabs, favicons, vault index
-swift test                   # 190 tests, incl. HTTP boundary + summary routing
+swift test                   # 199 tests, incl. HTTP boundary + summary routing
 python3 tools/scrub-check.py # 内网标识词闸门，推之前跑
 ```
 

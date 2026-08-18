@@ -25,6 +25,16 @@ final class TabListModel: ObservableObject {
 
     private var templates: [QuickOpenTemplate] = []
 
+    /// What the config file said that the parser couldn't use.
+    ///
+    /// Published rather than dropped on the floor, which is what happened until
+    /// now: parsing has always collected these — a `use:` pointing at a shared
+    /// list that doesn't exist, a parameter described but absent from the URL —
+    /// and the only thing that ever read them was the command-line probe. From
+    /// inside the app a broken template was simply a template that wasn't
+    /// there, with no hint that it had ever been written.
+    @Published private(set) var quickOpenProblems: [String] = []
+
     let quickOpenState = QuickOpenState()
 
     /// Set while filling in a template's parameters. The state machine itself
@@ -50,8 +60,15 @@ final class TabListModel: ObservableObject {
     /// Quick-open templates are rows like any other, so one prompt covers open
     /// tabs, saved links, and parameterized platform URLs.
     private func reloadQuickOpen() {
-        guard let vaultStore else { templates = []; quickOpenRows = []; return }
-        templates = QuickOpenStore.load(vaultRoot: vaultStore.vaultRoot).templates
+        guard let vaultStore else {
+            templates = []
+            quickOpenRows = []
+            quickOpenProblems = []
+            return
+        }
+        let loaded = QuickOpenStore.load(vaultRoot: vaultStore.vaultRoot)
+        templates = loaded.templates
+        quickOpenProblems = loaded.problems
         quickOpenRows = templates.map { t in
             let params = t.parameters.map { "{\($0)}" }.joined(separator: " ")
             return TabEntry(
@@ -79,7 +96,8 @@ final class TabListModel: ObservableObject {
                 ? $0.lastActiveAt > $1.lastActiveAt
                 : $0.title < $1.title
         }
-        Log.write("reload: \(templates.count) quick-open templates")
+        Log.write("reload: \(templates.count) quick-open templates, "
+                  + "\(quickOpenProblems.count) config problems")
     }
 
     func template(for entry: TabEntry) -> QuickOpenTemplate? {
@@ -105,7 +123,7 @@ final class TabListModel: ObservableObject {
     func fieldText(_ parameter: String) -> String { filling?.text(of: parameter) ?? "" }
     var fillingCandidates: [Choice] { filling?.candidates ?? [] }
     var fillingHasCandidateList: Bool { filling?.hasCandidateList ?? false }
-    var fillingHighlight: Int { filling?.highlighted ?? 0 }
+    var fillingHighlight: Int? { filling?.highlighted }
     var fillingURL: URL? { filling?.url }
 
     /// A tab already showing exactly this URL, if there is one.

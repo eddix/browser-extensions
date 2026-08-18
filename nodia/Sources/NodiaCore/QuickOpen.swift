@@ -113,12 +113,24 @@ public struct QuickOpenTemplate: Sendable, Equatable {
     /// from the moment it opens, blanks included, and substituting those would
     /// quietly produce `…/detail/` — a URL that looks finished, parses fine,
     /// and goes nowhere.
+    ///
+    /// "Still has a hole in it" is decided by the same pattern that decided what
+    /// to ask you about, not by searching for a bare `{`. Plenty of real URLs
+    /// carry literal braces — a query parameter holding a JSON filter is the
+    /// common one — and treating those as unfilled made such a template
+    /// permanently unopenable: every field answered, and the footer still
+    /// reading "还缺一个值". Anything shaped like `{name}` is a placeholder here
+    /// by definition, because `parameters` reads it the same way and puts a
+    /// field on screen for it; anything else is text the URL wanted.
     public func expand(_ values: [String: String]) -> URL? {
         var filled = urlTemplate
         for (key, value) in values where !value.isEmpty {
             filled = filled.replacingOccurrences(of: "{\(key)}", with: Self.encode(value))
         }
-        guard !filled.contains("{"), let url = URL(string: filled), url.host != nil else {
+        let unfilled = Self.placeholderPattern.firstMatch(
+            in: filled, range: NSRange(filled.startIndex..., in: filled)
+        )
+        guard unfilled == nil, let url = URL(string: filled), url.host != nil else {
             return nil
         }
         return url
@@ -201,10 +213,22 @@ public struct QuickOpenStore: Sendable {
         }
 
         var templates: [QuickOpenTemplate] = []
+        var takenNames = Set<String>()
         for (index, entry) in entries.enumerated() {
             let label = (entry["name"] as? String).map { "「\($0)」" } ?? "第 \(index + 1) 条"
             guard let name = (entry["name"] as? String).map(TextClean.strip), !name.isEmpty else {
                 problems.append("\(label) 缺少 name")
+                continue
+            }
+            // The name is the identity, not just a caption: rows are keyed
+            // `qo:<name>`, the usage score is stored under it, and lookup takes
+            // the first match. So a second template with the same name isn't a
+            // second template — it's a row you can see in the list and can
+            // never open, because selecting it opens the first one's URL. Kept
+            // out of the list entirely rather than merely reported, since the
+            // alternative is leaving that row on screen to lie about itself.
+            guard takenNames.insert(name).inserted else {
+                problems.append("\(label) 与前面某条重名，这一条被忽略")
                 continue
             }
             guard let url = (entry["url"] as? String).map(TextClean.strip), !url.isEmpty else {
@@ -218,18 +242,39 @@ public struct QuickOpenStore: Sendable {
                     problems.append("\(label) 的参数 \(param) 应该是对象")
                     continue
                 }
+                // nil means the parameter asked for free input; an empty array
+                // means it asked for a list and named nothing.
+                let listed: [Choice]?
                 if let use = spec["use"] as? String {
                     guard let list = shared[use] else {
                         problems.append("\(label) 的参数 \(param) 引用了不存在的 shared.\(use)")
                         continue
                     }
-                    params[param] = .choices(list)
+                    listed = list
                 } else if let list = spec["choices"] as? [String] {
-                    params[param] = .choices(list.map(Choice.parse))
+                    listed = list.map(Choice.parse)
                 } else if spec["input"] as? Bool == true {
-                    params[param] = .input
+                    listed = nil
                 } else {
                     problems.append("\(label) 的参数 \(param) 需要 choices / input / use 之一")
+                    continue
+                }
+
+                // A list with nothing in it is one you meant to fill in, and it
+                // used to pass without a word: the field then rendered as a
+                // closed set offering "无匹配的候选值", which is a door that
+                // isn't there — you can type into it and it works. Reported so
+                // the mistake is visible, and demoted to free input so the form
+                // describes what the field actually does. Doing only the first
+                // leaves the UI lying; only the second hides the typo.
+                switch listed {
+                case .some(let list) where !list.isEmpty:
+                    params[param] = .choices(list)
+                case .some:
+                    problems.append("\(label) 的参数 \(param) 没有候选值，按自由输入处理")
+                    params[param] = .input
+                case .none:
+                    params[param] = .input
                 }
             }
 

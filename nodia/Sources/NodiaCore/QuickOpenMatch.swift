@@ -8,7 +8,8 @@ import Foundation
 /// window rather than add to the pile.
 public enum QuickOpenMatch {
 
-    /// Trailing slashes, and nothing else.
+    /// Trailing slashes, and the case of the parts where case carries no
+    /// meaning.
     ///
     /// Deliberately *not* `VaultStore.normalize`, which truncates at `#`. That
     /// rule is right for saved links, where a fragment is a heading you jumped
@@ -17,10 +18,31 @@ public enum QuickOpenMatch {
     /// their bare domain, and asking for one task would switch you to whichever
     /// other task happened to be open. Query strings stay for the same reason:
     /// a dashboard's whole subject is usually in them.
+    ///
+    /// Scheme and host fold to lowercase because DNS doesn't care and neither
+    /// does the browser: a tab opened from a link that shouted the hostname is
+    /// the same page as one opened from a template, and treating them as two
+    /// left you with a second window on a page you already had. A blanket
+    /// `lowercased()` cannot do this job — everything after the host is
+    /// case-*sensitive*, and mangling it would collapse `/Detail/AbC` onto
+    /// `/detail/abc` and switch you to a different object. Userinfo is left
+    /// alone for the same reason: a password is not a hostname.
     public static func normalize(_ url: String) -> String {
         var s = url.trimmingCharacters(in: .whitespacesAndNewlines)
         while s.hasSuffix("/") { s.removeLast() }
-        return s
+
+        guard let scheme = s.range(of: "://") else { return s }
+        let rest = s[scheme.upperBound...]
+        let authorityEnd = rest.firstIndex { $0 == "/" || $0 == "?" || $0 == "#" } ?? rest.endIndex
+        let authority = rest[..<authorityEnd]
+        let hostStart = authority.lastIndex(of: "@").map(authority.index(after:))
+            ?? authority.startIndex
+
+        return s[s.startIndex..<scheme.lowerBound].lowercased()
+            + "://"
+            + authority[..<hostStart]
+            + authority[hostStart...].lowercased()
+            + rest[authorityEnd...]
     }
 
     /// The open tab showing exactly this URL, if there is one.

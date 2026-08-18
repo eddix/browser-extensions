@@ -284,7 +284,11 @@ struct SearchView: View {
                             .padding(.bottom, 6)
                         }
                         .onChange(of: model.fillingHighlight) { _, i in
-                            guard candidates.indices.contains(i) else { return }
+                            // Nothing highlighted is a real state now, and it
+                            // must not scroll: it's what typing leaves behind,
+                            // and yanking the list back to the top mid-keystroke
+                            // is motion nobody asked for.
+                            guard let i, candidates.indices.contains(i) else { return }
                             withAnimation(.easeOut(duration: 0.12)) {
                                 proxy.scrollTo(candidates[i].value, anchor: .center)
                             }
@@ -300,14 +304,72 @@ struct SearchView: View {
     /// you know one exists — this is the browsable answer.
     private func quickOpenList(_ r: ResolvedTheme) -> some View {
         let rows = model.quickOpenResults
-        return Group {
+        let problems = model.quickOpenProblems
+        return VStack(spacing: 0) {
+            // Above the list rather than only in place of it, because parsing
+            // keeps every template it *could* read: the ordinary shape of a
+            // broken config is nine templates that work and a tenth that
+            // silently isn't there. Showing the reason only when the list came
+            // back completely empty would explain the one case you'd have
+            // guessed on your own.
+            if !problems.isEmpty { configProblems(problems, r) }
+            quickOpenRows(rows, problems: problems, r)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// What the config file says that the app couldn't use. Each line names the
+    /// template it came from — "缺少 url" on its own only tells you to go read
+    /// the whole file.
+    private func configProblems(_ problems: [String], _ r: ResolvedTheme) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                Text("\(QuickOpenStore.fileName) 有 \(problems.count) 处问题")
+                    .font(r.captionFont.weight(.semibold))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(r.palette.highlight)
+
+            // Capped, because this sits on top of the list it's warning about
+            // and a config with thirty complaints would push every template off
+            // the panel — turning a hint into the thing standing in your way.
+            ForEach(Array(problems.prefix(3).enumerated()), id: \.offset) { _, problem in
+                Text(problem)
+                    .font(r.captionFont)
+                    .foregroundStyle(r.palette.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if problems.count > 3 {
+                Text("还有 \(problems.count - 3) 处…")
+                    .font(r.captionFont)
+                    .foregroundStyle(r.palette.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(r.palette.highlight.opacity(0.10))
+    }
+
+    private func quickOpenRows(
+        _ rows: [TabEntry], problems: [String], _ r: ResolvedTheme
+    ) -> some View {
+        Group {
             if rows.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "bolt")
                         .font(.system(size: 28)).foregroundStyle(r.palette.secondary)
-                    Text(model.query.isEmpty ? "还没有快速打开模板" : "无匹配")
+                    // "还没有" would be a wrong answer when the file is full of
+                    // templates the parser rejected — the banner above is
+                    // already saying they exist.
+                    Text(model.query.isEmpty
+                         ? (problems.isEmpty ? "还没有快速打开模板" : "没有一条模板能用")
+                         : "无匹配")
                         .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
-                    if model.query.isEmpty {
+                    if model.query.isEmpty && problems.isEmpty {
                         Text("在收藏库的 \(QuickOpenStore.fileName) 里添加")
                             .font(r.captionFont).foregroundStyle(r.palette.secondary)
                     }
