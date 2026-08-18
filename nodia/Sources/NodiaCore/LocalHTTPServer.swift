@@ -66,14 +66,27 @@ public final class LocalHTTPServer: @unchecked Sendable {
     private let port: UInt16
     private let tokenProvider: @Sendable () -> String
     private let handler: Handler
+    /// How long a connection may go without sending anything before we hang up
+    /// on it. Times the *reading* of a request only, never the answering of
+    /// one: a summary takes tens of seconds, and the clock stops the moment we
+    /// have a whole request. Over loopback, bytes that are coming arrive in
+    /// milliseconds, so the default is generous by orders of magnitude — it is
+    /// a parameter so a test can make the wait short enough to watch.
+    private let readTimeout: TimeInterval
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "com.eddix.nodia.http")
 
     public private(set) var lastError: String?
 
-    public init(port: UInt16, tokenProvider: @escaping @Sendable () -> String, handler: @escaping Handler) {
+    public init(
+        port: UInt16,
+        tokenProvider: @escaping @Sendable () -> String,
+        readTimeout: TimeInterval = LocalHTTPServer.defaultReadTimeout,
+        handler: @escaping Handler
+    ) {
         self.port = port
         self.tokenProvider = tokenProvider
+        self.readTimeout = readTimeout
         self.handler = handler
     }
 
@@ -112,37 +125,122 @@ public final class LocalHTTPServer: @unchecked Sendable {
         listener = nil
     }
 
+    // MARK: - Limits
+
+    /// Ceilings on what one connection may cost us before it has proved it is
+    /// the extension.
+    ///
+    /// Everything below runs *before* the token check, so a request that never
+    /// ends is a request from anyone at all. Measured on the unbounded version:
+    /// a tokenless POST was still growing past 60 MiB, one that declared 200
+    /// MiB and delivered it took the app to 427 MB resident, and a connection
+    /// that sent half a header block was still sitting there fifteen seconds
+    /// later holding a slot.
+    ///
+    /// The numbers come from the one request that is genuinely big. The
+    /// extension ships at most `MAX_CONTENT_CHARS` = 32000 characters of page
+    /// text per preview; at UTF-8's worst four bytes a character, plus JSON
+    /// escaping and the title and URL around it, that is a couple of hundred
+    /// kilobytes. Bulk saves send an array, but deliberately carry no page text
+    /// at all. So 4 MiB is roughly twenty times the largest real request, and
+    /// still a number we can afford to be handed by a stranger.
+    private static let maxHeaderBytes = 64 * 1024
+    private static let maxBodyBytes = 4 * 1024 * 1024
+    public static let defaultReadTimeout: TimeInterval = 10
+
     // MARK: - Connection
+
+    /// One in-flight request. Exists so the idle timer has somewhere to live
+    /// alongside the buffer it guards; both are touched only from `queue`,
+    /// which every connection callback is delivered on.
+    private final class Session {
+        let conn: NWConnection
+        var buffer = Data()
+        private var answering = false
+        private var idle: DispatchSourceTimer?
+
+        init(conn: NWConnection, queue: DispatchQueue, timeout: TimeInterval) {
+            self.conn = conn
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            idle = timer
+            timer.setEventHandler { [weak self] in
+                // `cancel()` only promises to stop *future* firings, so a timer
+                // that came due in the same instant the last byte arrived can
+                // still land here. Standing down once we're answering is what
+                // stops it from closing a connection we are about to reply on.
+                guard let self, !self.answering else { return }
+                Log.write("http: dropped a connection that stopped mid-request")
+                self.conn.cancel()
+            }
+            timer.schedule(deadline: .now() + timeout)
+            timer.resume()
+        }
+
+        /// Bytes arrived, so the peer is alive; give it the full window again.
+        func touch(timeout: TimeInterval) {
+            idle?.schedule(deadline: .now() + timeout)
+        }
+
+        /// Called once the request is whole. From here on the connection is
+        /// waiting on *us*, and killing it would only ever kill our own reply.
+        ///
+        /// Today the session is released the moment the read loop stops
+        /// referencing it, so `deinit` below would disarm the timer anyway.
+        /// Said out loud regardless, because "the object happened to be
+        /// deallocated in time" is not a property to hang a live connection on,
+        /// and it stops holding the day anything keeps a session alive across
+        /// the handoff.
+        func stopWaiting() {
+            answering = true
+            idle?.cancel()
+            idle = nil
+        }
+
+        deinit { idle?.cancel() }
+    }
 
     private func accept(_ conn: NWConnection) {
         conn.start(queue: queue)
-        receive(conn, buffer: Data())
+        receive(Session(conn: conn, queue: queue, timeout: readTimeout))
     }
 
-    private func receive(_ conn: NWConnection, buffer: Data) {
+    private func receive(_ session: Session) {
+        let conn = session.conn
         conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] chunk, _, isComplete, error in
             guard let self else { return }
-            var buffer = buffer
-            if let chunk { buffer.append(chunk) }
+            if let chunk { session.buffer.append(chunk) }
+            session.touch(timeout: self.readTimeout)
 
             if error != nil {
+                session.stopWaiting()
                 conn.cancel()
                 return
             }
 
             // Keep reading until headers are complete and the declared body has
             // arrived — extracted page text easily spans several TCP segments.
-            switch Self.parse(buffer) {
+            switch Self.parse(session.buffer) {
             case .request(let request):
+                session.stopWaiting()
                 self.route(request) { response in
                     self.send(response, on: conn, origin: request.origin)
                 }
             case .malformed:
                 // No origin: a request we can't parse has no header we'd trust
                 // to hand out a CORS grant with.
+                session.stopWaiting()
                 self.send(.error(400, "malformed request"), on: conn, origin: nil)
+            case .headersTooLarge:
+                session.stopWaiting()
+                self.send(.error(431, "header too large"), on: conn, origin: nil)
+            case .bodyTooLarge:
+                // Answered rather than dropped, because the honest caller for
+                // this is a page whose extracted text ran away with itself, and
+                // a status is easier to act on than a closed socket.
+                session.stopWaiting()
+                self.send(.error(413, "body too large"), on: conn, origin: nil)
             case .incomplete:
-                if isComplete { conn.cancel() } else { self.receive(conn, buffer: buffer) }
+                if isComplete { conn.cancel() } else { self.receive(session) }
             }
         }
     }
@@ -182,10 +280,10 @@ public final class LocalHTTPServer: @unchecked Sendable {
 
     // MARK: - Parsing
 
-    /// Three outcomes, not two: a request, bytes still on the way, or a request
-    /// we refuse to serve.
+    /// More outcomes than "a request or not": bytes still on the way, and three
+    /// separate ways of refusing to serve one.
     ///
-    /// The third case is a safety boundary, not tidiness. Parsing runs *before*
+    /// The refusals are a safety boundary, not tidiness. Parsing runs *before*
     /// the token check, so every line of it is reachable by any process that can
     /// open a loopback socket — one hand-written request, and whatever the
     /// parser does next it does on the whole app's behalf. A negative
@@ -195,14 +293,24 @@ public final class LocalHTTPServer: @unchecked Sendable {
     /// Clamping to zero would have stopped the crash and then answered as if
     /// nothing were wrong; a length that cannot exist is a request we have no
     /// business guessing the meaning of.
+    ///
+    /// The size cases are the same argument about memory rather than about
+    /// crashes: a caller who has not authenticated should not be able to decide
+    /// how much of this machine's RAM the reader takes.
     private enum Parsed {
         case request(Request)
         case incomplete
         case malformed
+        case headersTooLarge
+        case bodyTooLarge
     }
 
     private static func parse(_ data: Data) -> Parsed {
-        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return .incomplete }
+        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else {
+            // Not slowness — a header block with no end in sight is an open
+            // tap, and the buffer holding it is the thing that grows.
+            return data.count > maxHeaderBytes ? .headersTooLarge : .incomplete
+        }
         guard let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8) else { return .incomplete }
 
         var lines = head.components(separatedBy: "\r\n")
@@ -223,6 +331,10 @@ public final class LocalHTTPServer: @unchecked Sendable {
 
         let declared = Int(headers["content-length"] ?? "0") ?? 0
         guard declared >= 0 else { return .malformed }
+        // Judged on the declaration, before a byte of it is read: waiting for
+        // 200 MiB to arrive and *then* objecting is how the 427 MB resident
+        // measurement happened.
+        guard declared <= maxBodyBytes else { return .bodyTooLarge }
         let body = data[headerEnd.upperBound...]
         guard body.count >= declared else { return .incomplete }  // wait for the rest
 
@@ -255,6 +367,8 @@ public final class LocalHTTPServer: @unchecked Sendable {
         case 400: return "Bad Request"
         case 401: return "Unauthorized"
         case 404: return "Not Found"
+        case 413: return "Content Too Large"
+        case 431: return "Request Header Fields Too Large"
         default: return "Internal Server Error"
         }
     }

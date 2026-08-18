@@ -16,6 +16,13 @@ public final class FaviconStore {
         let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
         if sqlite3_open_v2(uri, &db, flags, nil) != SQLITE_OK {
             sqlite3_close(db)
+            // Cleared, not merely closed. `sqlite3_open_v2` hands back a live
+            // handle even when it fails, and a failable initializer that gets
+            // this far has already fully initialized the object — so `deinit`
+            // still runs and closes the same pointer a second time
+            // (SQLITE_MISUSE). The path that reaches it is ordinary: Arc's
+            // Favicons file sitting behind a privacy prompt we weren't granted.
+            db = nil
             return nil
         }
     }

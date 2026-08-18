@@ -8,20 +8,53 @@ import NodiaCore
 /// of Markdown between two processes.
 final class VaultService {
     private let settings: VaultSettings
+    /// Handed the live store on the main thread every time it changes, nil
+    /// included. A push rather than a `vaultStore` property to read, because
+    /// the only correct moment to read one is "after the queue below is done",
+    /// and a property invites reading it at any other.
+    private let onStoreChanged: (VaultStore?) -> Void
+
+    /// `store` and `server` belong to this queue and are touched nowhere else.
+    ///
+    /// They used to be touched from two threads: startup opens the vault off
+    /// the main thread (see `start`), while a vault-path change calls `restart`
+    /// from the settings window on main. Interleaved, the two runs each set
+    /// both properties and the survivors came from different runs — the old
+    /// server, still holding the port and still serving the *old* vault path,
+    /// with the new one left as a `server` object that reports "listening"
+    /// while owning no socket. The visible symptom was that changing the vault
+    /// path did nothing at all, silently.
+    private let queue = DispatchQueue(label: "com.eddix.nodia.vault-service")
     private var store: VaultStore?
     private var server: LocalHTTPServer?
 
-    init(settings: VaultSettings) {
+    init(settings: VaultSettings, onStoreChanged: @escaping (VaultStore?) -> Void) {
         self.settings = settings
+        self.onStoreChanged = onStoreChanged
     }
 
-    var vaultStore: VaultStore? { store }
-
+    /// Off the main thread, always: the vault typically sits under ~/Documents,
+    /// and the first access there blocks until the system's privacy prompt is
+    /// answered. On main that freezes launch outright — no menu-bar icon, no
+    /// hotkey — and a menu-bar-only app may never manage to show the prompt.
     func start() {
-        // Opening the vault can hang: if it sits under ~/Documents, macOS
-        // holds the first access until the privacy prompt is answered — and a
-        // menu-bar-only app may never show that prompt on its own. Say so,
-        // otherwise the settings window just reads "未启动" forever.
+        queue.async { [weak self] in self?.open() }
+    }
+
+    func restart() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.server?.stop()
+            self.server = nil
+            self.store = nil
+            self.open()
+        }
+    }
+
+    private func open() {
+        // The privacy prompt can hold this for as long as it takes someone to
+        // notice it, so say what's happening — otherwise the settings window
+        // just reads "未启动" forever and looks like a failure.
         setStatus("正在打开收藏库…")
         do {
             let store = try VaultStore(vaultRoot: settings.vaultURL)
@@ -47,13 +80,12 @@ final class VaultService {
             setStatus("启动失败：\(error.localizedDescription)")
             Log.write("vault service: \(error.localizedDescription)")
         }
-    }
-
-    func restart() {
-        server?.stop()
-        server = nil
-        store = nil
-        start()
+        // Announced whatever happened, and announced from here rather than only
+        // on the happy path: a vault that opened onto a port already in use is
+        // still a vault worth searching, and a vault that failed to open has to
+        // take the previous one out of the panel rather than leave it there.
+        let opened = store
+        DispatchQueue.main.async { [onStoreChanged] in onStoreChanged(opened) }
     }
 
     /// Writes the quick-open template file once, with worked examples.

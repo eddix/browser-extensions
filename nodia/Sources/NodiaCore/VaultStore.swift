@@ -74,12 +74,20 @@ public final class VaultStore: @unchecked Sendable {
     }
 
     public let vaultRoot: URL
+    /// The root's path components, resolved once. `relativePath` runs per file
+    /// during a rebuild and per link during a save, and `resolvingSymlinksInPath`
+    /// touches the filesystem — the root does not change under us, so resolving
+    /// it inside that loop was work done thousands of times for one answer.
+    private let rootParts: [String]
     private let queue = DispatchQueue(label: "com.eddix.nodia.vault")
     /// Normalized url -> the entry already on disk. Doubles as the duplicate
     /// check and as the lookup that lets the extension show you the summary a
     /// link was saved with before offering to replace it.
     private var entryByURL: [String: Entry] = [:]
     private var entries: [Entry] = []
+    /// What the directory looked like when the index was last built. See
+    /// `refreshIfStaleLocked`.
+    private var indexedSnapshot = Snapshot()
 
     public init(vaultRoot: URL) throws {
         var isDir: ObjCBool = false
@@ -88,6 +96,7 @@ public final class VaultStore: @unchecked Sendable {
             throw VaultError.notADirectory(vaultRoot.path)
         }
         self.vaultRoot = vaultRoot
+        self.rootParts = vaultRoot.standardizedFileURL.resolvingSymlinksInPath().pathComponents
         rebuildIndex()
     }
 
@@ -120,7 +129,6 @@ public final class VaultStore: @unchecked Sendable {
     /// be `/var/…` (a symlink), and prefix-trimming there silently produces
     /// garbage like `/privateBookmark/…`.
     private func relativePath(_ url: URL) -> String {
-        let rootParts = vaultRoot.standardizedFileURL.resolvingSymlinksInPath().pathComponents
         let fileParts = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
         guard fileParts.count > rootParts.count,
               Array(fileParts.prefix(rootParts.count)) == rootParts else {
@@ -138,10 +146,91 @@ public final class VaultStore: @unchecked Sendable {
     }
 
     public func rebuildIndex() {
-        queue.sync { rebuildIndexLocked() }
+        queue.sync { rebuildIndexLocked(snapshot: diskSnapshot()) }
     }
 
-    private func rebuildIndexLocked() {
+    // MARK: - Staying current
+
+    /// A fingerprint of the Markdown on disk: how many files, and a combined
+    /// stamp of each one's path, size and modification time.
+    ///
+    /// The parent directory's own mtime would have been cheaper and is the
+    /// wrong signal — it moves only when a file is added or removed from the
+    /// directory, and an editor rewriting a file in place leaves it alone.
+    /// Measured: appending to a file bumps the file's mtime and not the
+    /// directory's. Editing in place is the whole case we're here for.
+    private struct Snapshot: Equatable {
+        var fileCount = 0
+        /// Summed rather than fed through a single hasher, because the
+        /// enumerator promises no particular order and a reordering is not a
+        /// change. Only ever compared against another snapshot from this same
+        /// process, which is what makes `Hasher`'s per-process seed harmless.
+        var digest: UInt64 = 0
+    }
+
+    private static let freshnessKeys: [URLResourceKey] = [
+        .contentModificationDateKey, .fileSizeKey,
+    ]
+
+    private func diskSnapshot() -> Snapshot {
+        guard let walker = FileManager.default.enumerator(
+            at: bookmarkDir,
+            includingPropertiesForKeys: Self.freshnessKeys,
+            options: [.skipsHiddenFiles]
+        ) else { return Snapshot() }
+
+        var snapshot = Snapshot()
+        for case let url as URL in walker where url.pathExtension == "md" {
+            let values = try? url.resourceValues(forKeys: Set(Self.freshnessKeys))
+            var hasher = Hasher()
+            hasher.combine(url.path)
+            hasher.combine(values?.contentModificationDate)
+            hasher.combine(values?.fileSize)
+            snapshot.fileCount += 1
+            snapshot.digest = snapshot.digest &+ UInt64(bitPattern: Int64(hasher.finalize()))
+        }
+        return snapshot
+    }
+
+    /// Re-reads the vault if it changed under us, before answering anything.
+    ///
+    /// The index used to be built once, at startup, and nothing ever refreshed
+    /// it — but the vault is a folder of Markdown whose whole point is that the
+    /// user edits it in Obsidian. Deleting an entry by hand was the sharp
+    /// version: `check-url` went on reporting the link as saved, so the
+    /// extension offered to refresh a summary that `update-summary` then
+    /// couldn't find in the file, and 404'd. That link could not be saved again
+    /// until nodia was restarted, and the only thing that would have fixed it
+    /// is a settings button labelled "restart the service" — which nobody has a
+    /// reason to press.
+    ///
+    /// Checked here rather than from a directory watcher: every answer this
+    /// class gives already funnels through the serial queue, so this is the one
+    /// place staleness can be caught, with no background thread, no debouncing
+    /// of an editor's mid-save churn, and no window where a watcher has fired
+    /// but the index hasn't caught up yet.
+    ///
+    /// Affordable on every single call, including the `check-url` the extension
+    /// polls on every tab switch, because the two walks are not remotely the
+    /// same price. The enumerator fetches size and mtime in bulk as it reads
+    /// the directory, so the check costs no syscall per file: measured over 500
+    /// files it was 3.4 ms, against 800 ms merely to *open and read* the same
+    /// files — before parsing any of them. Checking is ~200x cheaper than the
+    /// rebuild it usually avoids, which is what makes "just look every time"
+    /// the simple answer rather than the expensive one.
+    private func refreshIfStaleLocked() {
+        let current = diskSnapshot()
+        guard current != indexedSnapshot else { return }
+        Log.write("vault: files changed on disk, reindexing")
+        rebuildIndexLocked(snapshot: current)
+    }
+
+    /// Takes the snapshot as an argument, and the caller measures it *before*
+    /// reading the files: a file that changes mid-rebuild then leaves the
+    /// stored snapshot describing the older state, so the next check sees a
+    /// difference and rebuilds again. The other order loses the edit for good.
+    private func rebuildIndexLocked(snapshot: Snapshot) {
+        indexedSnapshot = snapshot
         entryByURL.removeAll()
         entries.removeAll()
         guard let walker = FileManager.default.enumerator(
@@ -243,24 +332,36 @@ public final class VaultStore: @unchecked Sendable {
     }
 
     public func checkDuplicate(_ url: String) -> String? {
-        queue.sync { entryByURL[Self.normalize(url)]?.relativePath }
+        queue.sync {
+            refreshIfStaleLocked()
+            return entryByURL[Self.normalize(url)]?.relativePath
+        }
     }
 
     /// The entry already saved for `url`, if any — including the summary it
     /// was saved with, so it can be shown before anything replaces it.
     public func entry(for url: String) -> Entry? {
-        queue.sync { entryByURL[Self.normalize(url)] }
+        queue.sync {
+            refreshIfStaleLocked()
+            return entryByURL[Self.normalize(url)]
+        }
     }
 
     /// Snapshot for the search index.
     public func allEntries() -> [Entry] {
-        queue.sync { entries }
+        queue.sync {
+            refreshIfStaleLocked()
+            return entries
+        }
     }
 
     // MARK: - Write
 
     public func save(_ links: [VaultLink]) -> SaveResult {
         queue.sync {
+            // A link the user deleted by hand should save again, not come back
+            // as a duplicate of an entry that no longer exists.
+            refreshIfStaleLocked()
             var saved = 0
             var duplicates: [Duplicate] = []
             var errors: [SaveError] = []
@@ -274,12 +375,19 @@ public final class VaultStore: @unchecked Sendable {
                 let file = targetFile(for: link.kind)
                 do {
                     try append(link, to: file)
+                    // Indexed as the file will read back, not as the request
+                    // happened to arrive. The two used to disagree: a summary
+                    // with a newline in it went to disk on one line and into
+                    // the index on several, and an empty one was nil after a
+                    // restart but "" before — so `check-url` gave one answer
+                    // today and another tomorrow for a record nobody touched.
+                    let summary = TextClean.singleLine(link.summary ?? "")
                     let entry = Entry(
                         title: link.title,
                         url: link.url,
                         kind: link.kind,
-                        summary: link.summary,
-                        keywords: link.keywords,
+                        summary: summary.isEmpty ? nil : summary,
+                        keywords: link.keywords.map(TextClean.singleLine),
                         relativePath: relativePath(file)
                     )
                     entryByURL[key] = entry
@@ -307,6 +415,10 @@ public final class VaultStore: @unchecked Sendable {
     /// owns and may well have edited themselves.
     public func updateSummary(url: String, summary: String, keywords: [String]) -> UpdateResult {
         queue.sync {
+            // The index is what decides which file to open and rewrite. If it
+            // disagrees with disk, this is the call that discovers it the hard
+            // way — by not finding the entry it was told was there.
+            refreshIfStaleLocked()
             let key = Self.normalize(url)
             guard let existing = entryByURL[key] else {
                 return UpdateResult(success: false, file: nil, error: "这个链接不在收藏库里")

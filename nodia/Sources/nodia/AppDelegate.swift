@@ -7,7 +7,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = TabListModel()
     private let themeStore = ThemeStore()
     private let vaultSettings = VaultSettings()
-    private lazy var vault = VaultService(settings: vaultSettings)
+    // The callback is what makes a vault-path change reach the panel. The model
+    // holds the store weakly, so a restart that drops the old one leaves search
+    // with no saved links and no quick-open templates until something hands it
+    // the new one — and nothing did.
+    private lazy var vault = VaultService(settings: vaultSettings) { [weak self] store in
+        self?.model.attachVault(store)
+    }
     private lazy var settings = SettingsWindowController(
         themeStore: themeStore,
         vaultSettings: vaultSettings,
@@ -37,19 +43,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Receives saves from the browser extension, and feeds saved links
-        // into search so a closed tab is still one ⌘⇧K away.
-        //
-        // Off the main thread: the vault lives under ~/Documents, and the
-        // first touch there raises the system's privacy prompt, which blocks
-        // the calling thread until answered. On the main thread that freezes
-        // launch outright — no menu-bar icon, no hotkey.
-        let vault = self.vault           // instantiate the lazy var here, on main
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            vault.start()
-            DispatchQueue.main.async {
-                self?.model.attachVault(vault.vaultStore)
-            }
-        }
+        // into search so a closed tab is still one ⌘⇧K away. Returns at once;
+        // the service owns its own thread hop and calls back on main when the
+        // vault is open.
+        vault.start()
 
         // ⌘⇧K
         hotkey = GlobalHotkey(

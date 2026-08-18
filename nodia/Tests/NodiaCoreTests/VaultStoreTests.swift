@@ -224,4 +224,93 @@ final class VaultStoreTests: XCTestCase {
         _ = s.save([VaultLink(title: "T", url: "https://example.com/n", summary: "x")])
         XCTAssertFalse(read(inboxFile()).contains("keywords:"))
     }
+
+    // MARK: - Keeping up with a folder the user also edits
+
+    /// The vault is Markdown in Obsidian, and the index used to be built once
+    /// at startup and never again. Deleting an entry by hand therefore made the
+    /// link unsaveable rather than saveable: `check-url` still claimed it was
+    /// filed, so the extension offered to refresh a summary that
+    /// `update-summary` then couldn't find, and 404'd — until nodia restarted.
+    func testDeletingAnEntryByHandLetsTheLinkBeSavedAgain() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "会被删掉", url: "https://example.com/gone")])
+        XCTAssertNotNil(s.checkDuplicate("https://example.com/gone"))
+
+        // What Obsidian does when you delete the bullet.
+        try "---\ndate: 2026-08-18\ntype: browser-links\n---\n\n".write(
+            to: root.appendingPathComponent(inboxFile()), atomically: true, encoding: .utf8
+        )
+
+        XCTAssertNil(s.checkDuplicate("https://example.com/gone"),
+                     "手工删掉的条目不该还被当成重复")
+        XCTAssertEqual(s.save([VaultLink(title: "再存一次", url: "https://example.com/gone")]).saved, 1)
+    }
+
+    /// The other direction, and the one the search panel lives on: a file
+    /// written by anything else has to show up without a restart.
+    func testFileWrittenByAnotherProgramShowsUpInTheIndex() throws {
+        let s = try store()
+        XCTAssertTrue(s.allEntries().isEmpty)
+
+        try """
+        - 别处写的
+          - url: https://example.com/elsewhere
+          - tag: #from-browser #bookmark
+          - summary: 外部写入
+
+        """.write(
+            to: root.appendingPathComponent("Bookmark/01-Inbox/links-2026-01-05.md"),
+            atomically: true, encoding: .utf8
+        )
+
+        XCTAssertEqual(s.allEntries().map(\.url), ["https://example.com/elsewhere"])
+    }
+
+    /// A rename changes nothing about a file's size or mtime, so the freshness
+    /// check has to look at paths too — otherwise the index goes on naming a
+    /// file that no longer exists, which is the one thing `updateSummary`
+    /// cannot recover from.
+    func testRenamingAFileUpdatesWhereEntriesSayTheyLive() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "会被改名", url: "https://example.com/moved")])
+        let original = root.appendingPathComponent(inboxFile())
+
+        let renamed = original.deletingLastPathComponent()
+            .appendingPathComponent("links-renamed.md")
+        try FileManager.default.moveItem(at: original, to: renamed)
+
+        XCTAssertEqual(s.checkDuplicate("https://example.com/moved"),
+                       "Bookmark/01-Inbox/links-renamed.md")
+    }
+
+    /// Our own writes move the files too, so the freshness check fires right
+    /// after a save. It must not throw away what that save just recorded.
+    func testSavingDoesNotLoseTheEntryToItsOwnReindex() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "刚存的", url: "https://example.com/fresh", summary: "摘要")])
+
+        let entry = try XCTUnwrap(s.entry(for: "https://example.com/fresh"))
+        XCTAssertEqual(entry.title, "刚存的")
+        XCTAssertEqual(entry.summary, "摘要")
+        XCTAssertEqual(s.allEntries().count, 1, "重扫不应把刚存的条目变成两条")
+    }
+
+    /// `check-url` must give the same answer today and after a restart, and it
+    /// used not to: disk got the summary flattened onto one line, memory kept
+    /// whatever arrived. Two things now hold this — the index is built from the
+    /// flattened form, and the reindex above re-reads the file a save just
+    /// touched — so this pins the contract rather than either mechanism.
+    func testSummaryIsIndexedTheWayItWillReadBackFromDisk() throws {
+        let s1 = try store()
+        _ = s1.save([VaultLink(
+            title: "多行摘要", url: "https://example.com/multiline",
+            summary: "第一行\n\n第二行"
+        )])
+        let inMemory = try XCTUnwrap(s1.entry(for: "https://example.com/multiline")?.summary)
+
+        let fromDisk = try XCTUnwrap(try store().entry(for: "https://example.com/multiline")?.summary)
+        XCTAssertEqual(inMemory, fromDisk)
+        XCTAssertEqual(inMemory, "第一行 第二行")
+    }
 }
