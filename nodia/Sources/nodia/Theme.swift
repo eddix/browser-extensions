@@ -1,31 +1,36 @@
 import SwiftUI
 import AppKit
 
-/// Persisted user theme: which palette, font family, and base size.
+/// Persisted user theme: which palette, font family, base size, and how hard
+/// the palette pulls on the glass.
 struct Theme: Codable, Equatable {
     var paletteID: String
     var fontID: String
     var baseSize: Double
-    /// Whole-panel opacity. Slightly see-through keeps the panel feeling like
-    /// an overlay rather than a window that took over the screen.
-    var opacity: Double
+    /// How far the palette's color is allowed to pull the glass toward itself.
+    ///
+    /// A setting rather than a constant because there is no right answer, only
+    /// a trade: thick tint makes the ten palettes easy to tell apart and buries
+    /// the glass; thin tint leaves the refraction and the edge highlights doing
+    /// the talking and makes half the palettes look like each other.
+    var tintStrength: Double
 
-    /// The range worth offering. Below about 90% the text starts competing
-    /// with whatever is behind it, so the settings that were actually usable
-    /// occupied the top sliver of the old 60–100% slider — which put every
-    /// meaningful choice within two notches of the end.
-    static let opacityRange: ClosedRange<Double> = 0.85...1.0
+    /// Apple's own samples sit at 0.2–0.3 — `withAlphaComponent(0.3)` for a
+    /// static tint, 0.2 for hover — under the guidance that subtle tints keep
+    /// the glass aesthetic. Past roughly 0.5 the material stops reading as
+    /// glass at all, so that's the far end; the near end stops short of 0
+    /// because a tint that faint is indistinguishable from having no palette.
+    static let tintStrengthRange: ClosedRange<Double> = 0.15...0.50
+    static let defaultTintStrength: Double = 0.30
 
-    static let `default` = Theme(
-        paletteID: "system", fontID: "system", baseSize: 13, opacity: 0.90
-    )
+    static let `default` = Theme(paletteID: "system", fontID: "system", baseSize: 13)
 
-    // Themes saved before opacity existed decode without it.
-    init(paletteID: String, fontID: String, baseSize: Double, opacity: Double = 0.90) {
+    init(paletteID: String, fontID: String, baseSize: Double,
+         tintStrength: Double = Theme.defaultTintStrength) {
         self.paletteID = paletteID
         self.fontID = fontID
         self.baseSize = baseSize
-        self.opacity = opacity
+        self.tintStrength = tintStrength
     }
 
     init(from decoder: Decoder) throws {
@@ -33,11 +38,18 @@ struct Theme: Codable, Equatable {
         paletteID = try c.decodeIfPresent(String.self, forKey: .paletteID) ?? "system"
         fontID = try c.decodeIfPresent(String.self, forKey: .fontID) ?? "system"
         baseSize = try c.decodeIfPresent(Double.self, forKey: .baseSize) ?? 13
-        // Clamped: a value saved while the slider still went down to 60% would
-        // otherwise sit outside its own control, where the knob pins to one end
-        // and stops agreeing with the number beside it.
-        let saved = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 0.90
-        opacity = min(max(saved, Theme.opacityRange.lowerBound), Theme.opacityRange.upperBound)
+        // Deliberately not migrated from the key this replaced. That one held a
+        // whole-window alpha, and it lived in 0.85–1.0; carried over as a tint
+        // it would arrive as a flood. An archive from before the rename gets
+        // the default instead.
+        //
+        // Clamped for the same reason it always was: a value saved under an
+        // older range would otherwise sit outside its own slider, where the
+        // knob pins to one end and stops agreeing with the number beside it.
+        let saved = try c.decodeIfPresent(Double.self, forKey: .tintStrength)
+            ?? Theme.defaultTintStrength
+        tintStrength = min(max(saved, Theme.tintStrengthRange.lowerBound),
+                           Theme.tintStrengthRange.upperBound)
     }
 }
 
@@ -67,8 +79,7 @@ struct Palette: Identifiable, Equatable {
     let id: String
     let name: String
     let isDark: Bool?
-    let tint: Color?          // colored overlay over the glass; nil = pure glass
-    let tintOpacity: Double
+    let tint: Color?          // pulled into the glass; nil = untinted glass
     let foreground: Color
     let secondary: Color
     let accent: Color
@@ -79,7 +90,7 @@ struct Palette: Identifiable, Equatable {
 /// Everything the views need, derived from a `Theme`.
 struct ResolvedTheme {
     let palette: Palette
-    let material: NSVisualEffectView.Material
+    let tintStrength: Double
     let nsAppearance: NSAppearance?
     let searchFont: Font
     let titleFont: Font
@@ -94,17 +105,19 @@ enum ThemeResolver {
         let font = FontChoice(rawValue: theme.fontID) ?? .system
         let base = theme.baseSize
 
-        let material: NSVisualEffectView.Material
+        // The glass still needs to be told which way to lean: it picks its own
+        // brightness from the appearance, and a dark palette's text on light
+        // glass is unreadable however the tint is set.
         let appearance: NSAppearance?
         switch palette.isDark {
-        case .some(true):  material = .hudWindow; appearance = NSAppearance(named: .darkAqua)
-        case .some(false): material = .popover;   appearance = NSAppearance(named: .aqua)
-        case .none:        material = .sidebar;    appearance = nil
+        case .some(true):  appearance = NSAppearance(named: .darkAqua)
+        case .some(false): appearance = NSAppearance(named: .aqua)
+        case .none:        appearance = nil
         }
 
         return ResolvedTheme(
             palette: palette,
-            material: material,
+            tintStrength: theme.tintStrength,
             nsAppearance: appearance,
             searchFont: .system(size: base + 5, design: font.design),
             titleFont: .system(size: base, design: font.design),

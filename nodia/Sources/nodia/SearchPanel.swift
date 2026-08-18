@@ -41,20 +41,19 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
 
         let panel = panel ?? makePanel()
         self.panel = panel
-        panel.appearance = themeStore.resolved.nsAppearance
-        // Glass needs the window composited normally. Any alpha below 1 sends
-        // the whole window through an offscreen buffer that is then blended
-        // with the very backdrop the effect just sampled, which washes the
-        // refraction and the edge highlights back out — the panel ends up
-        // looking like a plain tinted blur, which is what it looked like.
-        // The glass is translucent on its own; the slider has nothing left to
-        // do here.
-        panel.alphaValue = SystemGlass.isAvailable ? 1.0 : themeStore.theme.opacity
+        let resolved = themeStore.resolved
+        panel.appearance = resolved.nsAppearance
+        // Re-read on every show rather than observed: the panel is built once
+        // and shown constantly, and the usual route into Settings — the footer
+        // button — closes the panel on the way, so the next show is the first
+        // moment a change there could reach the screen anyway.
+        //
         // Passed even when nil: switching back to a palette without a tint has
         // to *clear* the previous one, and `if let` would quietly leave the old
         // color on the glass while the appearance flipped to light.
         if let glass = glassView {
-            SystemGlass.tint(glass, themeStore.resolved.palette.tint.map(NSColor.init))
+            SystemGlass.tint(glass, resolved.palette.tint.map(NSColor.init),
+                             strength: CGFloat(resolved.tintStrength))
         }
 
         center(panel)
@@ -79,6 +78,12 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // The window's own alpha stays at 1 and gets no setting, because glass
+        // needs the window composited normally: any alpha below 1 sends the
+        // whole window through an offscreen buffer that is then blended with
+        // the very backdrop the effect just sampled, which washes the
+        // refraction and the edge highlights back out. A window-opacity slider
+        // could only turn the panel back into a plain tinted blur.
         panel.hasShadow = true
         panel.level = .floating
         panel.isMovableByWindowBackground = true
@@ -97,17 +102,15 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         )
         let host = NSHostingView(rootView: root)
         host.frame = NSRect(origin: .zero, size: Self.panelSize)
-        // On macOS 26 the glass *contains* the content rather than sitting
-        // behind it, so it owns the shape too — the SwiftUI side stops drawing
-        // its own background and corner radius when this is in play.
+        // The glass *contains* the content rather than sitting behind it, so it
+        // owns the background and the shape — the SwiftUI side draws neither.
         //
-        // The glass lays its innards out with constraints, so the content has
-        // to stop carrying an autoresizing mask or the two layout systems
-        // deadlock: measured, the glass's own render view and the holder around
-        // our content both came out 0×0, which drew no glass at all while the
+        // It lays its innards out with constraints, so the content has to stop
+        // carrying an autoresizing mask or the two layout systems deadlock:
+        // measured, the glass's own render view and the holder around our
+        // content both came out 0×0, which drew no glass at all while the
         // content spilled out of its zero-sized parent and looked almost right.
-        host.translatesAutoresizingMaskIntoConstraints = !SystemGlass.isAvailable
-        if !SystemGlass.isAvailable { host.autoresizingMask = [.width, .height] }
+        host.translatesAutoresizingMaskIntoConstraints = false
         let shell = SystemGlass.wrap(host, cornerRadius: Self.cornerRadius)
         shell.frame = NSRect(origin: .zero, size: Self.panelSize)
         shell.autoresizingMask = [.width, .height]
@@ -134,7 +137,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         clip.autoresizingMask = [.width, .height]
         clip.addSubview(shell)
         panel.contentView = clip
-        glassView = SystemGlass.isAvailable ? shell : nil
+        glassView = shell
         return panel
     }
 

@@ -32,7 +32,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$VERSION</string>
-    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <!-- Kept equal to the deployment target in Package.swift. The panel uses
+         NSGlassEffectView with no fallback, so an older system doesn't get a
+         degraded look, it gets a launch failure. -->
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>LSUIElement</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSAppleEventsUsageDescription</key><string>nodia 通过 Arc 的脚本接口切换到你选中的标签页。</string>

@@ -195,13 +195,14 @@ struct SettingsView: View {
                 }
             }
 
-            Section("透明度") {
+            Section("玻璃") {
                 VStack(alignment: .leading, spacing: 4) {
-                    // Rounded, not truncated: at 1% steps a stored 0.869999
-                    // would otherwise read as 86%.
-                    Text("面板不透明度 \(Int((themeStore.theme.opacity * 100).rounded()))%")
-                    Slider(value: $themeStore.theme.opacity, in: Theme.opacityRange, step: 0.01)
-                    Text("下次打开面板时生效。略微透光会让它更像浮层，而不是一扇盖住屏幕的窗。")
+                    // Rounded, not truncated: at 1% steps a stored 0.299999
+                    // would otherwise read as 29%.
+                    Text("配色浓度 \(Int((themeStore.theme.tintStrength * 100).rounded()))%")
+                    Slider(value: $themeStore.theme.tintStrength,
+                           in: Theme.tintStrengthRange, step: 0.01)
+                    Text("浓一点，十套配色更容易分辨；淡一点，玻璃的折射和边缘高光更明显。下面的预览随拖动更新，面板下次唤起时用上。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -219,25 +220,20 @@ private struct ThemePreview: View {
 
     // Generic, non-identifying sample content (public sites only).
     var body: some View {
-        ZStack {
-            VisualEffectView(material: resolved.material)
-            if let tint = resolved.palette.tint {
-                tint.opacity(resolved.palette.tintOpacity)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                row(title: "GitHub · Pull requests", sub: "github.com · Work",
-                    query: "git", selected: true)
-                row(title: "Wikipedia — the free encyclopedia", sub: "wikipedia.org · Reading",
-                    query: "wiki", selected: false)
-            }
-            .padding(10)
+        VStack(alignment: .leading, spacing: 4) {
+            row(title: "GitHub · Pull requests", sub: "github.com · Work",
+                query: "git", selected: true)
+            row(title: "Wikipedia — the free encyclopedia", sub: "wikipedia.org · Reading",
+                query: "wiki", selected: false)
         }
-        .frame(height: 104)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(resolved.palette.foreground.opacity(0.10))
-        )
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 104)
+        // Real glass rather than a drawing of it, so the tint slider has
+        // something to move. It won't match the panel: this one has an opaque
+        // settings window behind it to refract, the panel has the desktop. Use
+        // it to compare palettes, not to predict what the panel will look like.
+        .glassEffect(.regular.tint(resolved.palette.tint?.opacity(resolved.tintStrength)),
+                     in: .rect(cornerRadius: 12))
     }
 
     private func row(title: String, sub: String, query: String, selected: Bool) -> some View {

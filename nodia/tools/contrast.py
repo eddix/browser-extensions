@@ -1,38 +1,39 @@
 #!/usr/bin/env python3
-"""WCAG contrast check for the palettes in Sources/nodia/Palettes.swift.
+"""Relative contrast check for the palettes in Sources/nodia/Palettes.swift.
 
 Run it after adding or editing a palette:
 
     python3 tools/contrast.py
 
-Why this exists: the palettes are borrowed from editor themes, where the
+**These numbers are not predictions of what the screen will do.** The panel is
+a piece of macOS 26 glass: the compositor decides its actual color from the
+desktop behind it, the refraction, the specular edge and the palette's tint,
+and there is no public API to read the result back. Modeling that would be
+guessing with extra steps.
+
+So the reference surface here is the palette's own tint color, at full
+strength — a stand-in that is fixed, known, and in the right neighbourhood.
+What this checks is that a palette holds together *internally*: body text and
+secondary text separated enough to read as a hierarchy, secondary still legible
+where the selection wash lightens the ground under it, accent and highlight
+strong enough to be seen. Those relationships are properties of the palette and
+don't move when the desktop does.
+
+Why it exists at all: the palettes are borrowed from editor themes, where the
 de-emphasized color is a comment color picked against one solid background.
-Here it lands on two — the frosted background, and the selection wash painted
+Here it lands on two — the panel background, and the selection wash painted
 over it for the current row — and the wash *lightens*, which is exactly the
 direction that kills a dim color. Measured before this check existed, all nine
 palettes failed on a selected row; Dracula's `#6272A4` came out at 1.8:1.
 
-The background is an approximation and says so. The panel is an
-NSVisualEffectView over whatever happens to be behind the window, so the true
-value moves. What doesn't move is the shape of the problem, and a palette that
-fails here fails on any desktop.
+A palette that fails here is broken on any desktop. A palette that passes has
+only cleared the bar it can be held to, so a real screen still deserves a look
+— glass thins the tint the user chooses, which pulls every number down.
 """
 
 import re
 import sys
 from pathlib import Path
-
-# NSVisualEffectView output, as a *range*.
-#
-# The panel blurs whatever is behind the window, so its background is not one
-# color — a dark editor and a white document land in different places, and the
-# window's own opacity has no say in it (that alpha applies after the view has
-# already drawn a picture of your desktop). Everything below is evaluated at
-# both ends and reported at the worse one, because a palette tuned to the
-# middle looked fine in a screenshot and fell to 3.4:1 the moment the panel
-# happened to sit over something pale.
-MATERIAL_DARK = (0x141416, 0x5A5A5E)
-MATERIAL_LIGHT = (0xDCDCDC, 0xFFFFFF)
 
 # Body and de-emphasized text both have to clear normal-text contrast. The
 # accent and the matched-character highlight are allowed the large-text bar:
@@ -45,8 +46,7 @@ BAR_HIERARCHY = 1.35
 
 PALETTE_RE = re.compile(
     r'id:\s*"(?P<id>\w+)",\s*name:\s*"(?P<name>[^"]+)",\s*isDark:\s*(?P<dark>true|false|nil),\s*'
-    r'tint:\s*(?:Color\(hex:\s*(?P<tint>0x[0-9A-Fa-f]+)\)|nil),\s*'
-    r'tintOpacity:\s*(?P<ta>[\d.]+),\s*'
+    r'tint:\s*Color\(hex:\s*(?P<tint>0x[0-9A-Fa-f]+)\),\s*'
     r'foreground:\s*Color\(hex:\s*(?P<fg>0x[0-9A-Fa-f]+)\),\s*'
     r'secondary:\s*Color\(hex:\s*(?P<sec>0x[0-9A-Fa-f]+)\),\s*'
     r'accent:\s*Color\(hex:\s*(?P<acc>0x[0-9A-Fa-f]+)\),\s*'
@@ -87,18 +87,12 @@ def main():
 
     rows, failures = [], []
     for m in PALETTE_RE.finditer(text):
-        dark = m["dark"] == "true"
-        extremes = MATERIAL_DARK if dark else MATERIAL_LIGHT
+        base = rgb(int(m["tint"], 16))
 
         def against(color, on_band):
-            """Worst contrast across the backdrop range."""
-            worst = None
-            for base in extremes:
-                bg = over(rgb(int(m["tint"], 16)), rgb(base), float(m["ta"])) if m["tint"] else rgb(base)
-                target = over(rgb(int(m["sel"], 16)), bg, float(m["sa"])) if on_band else bg
-                r = contrast(color, target)
-                worst = r if worst is None else min(worst, r)
-            return worst
+            """Contrast against the palette's own tint, bare or under the wash."""
+            target = over(rgb(int(m["sel"], 16)), base, float(m["sa"])) if on_band else base
+            return contrast(color, target)
 
         fg, sec = rgb(int(m["fg"], 16)), rgb(int(m["sec"], 16))
         checks = [
@@ -115,9 +109,10 @@ def main():
         rows.append((m["name"], checks))
         failures += [(m["name"], n, v, bar) for n, v, bar in checks if v < bar]
 
-    # The System palette is skipped by construction: it uses semantic colors
-    # (.primary / .secondary / .accentColor) that the OS adapts and guarantees,
-    # and there is no hex to measure.
+    # The System palette is skipped by construction, twice over: it uses
+    # semantic colors (.primary / .secondary / .accentColor) that the OS adapts
+    # and guarantees, so there is no hex to measure, and it has no tint, so
+    # there would be nothing to measure it against either.
     if not rows:
         sys.exit("没有解析到任何配色 —— Palettes.swift 的写法可能变了，正则要跟着改")
 
@@ -129,14 +124,15 @@ def main():
         print(f"{name:<14}{cells}")
 
     print(f"\n阈值：正文/次要 {BAR_TEXT}，强调/高亮 {BAR_DECOR}，主次层级 {BAR_HIERARCHY}")
-    print("每格取背景区间两端里较差的一侧 —— 面板压在浅色窗口上是最坏情况")
+    print("底色 = 配色自己的 tint 原色，是个替身 —— 玻璃的真实底色由合成器决定，读不回来")
+    print("所以这里量的是色板内部的相对关系，不是屏幕上的真实对比度")
 
     if failures:
         print(f"\n{len(failures)} 处不达标：")
         for name, check, value, bar in failures:
             print(f"  {name:<14}{check:<12}{value:>5.2f}  (需 ≥{bar})")
         return 1
-    print(f"\n{len(rows)} 套配色全部达标。")
+    print(f"\n{len(rows)} 套配色的内部关系全部达标 —— 上屏还得自己看一眼。")
     return 0
 
 

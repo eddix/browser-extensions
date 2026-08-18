@@ -18,47 +18,33 @@ struct SearchView: View {
         let r = themeStore.resolved
         let mode = model.mode
 
-        ZStack {
-            // Only on systems without the glass container: there, this view is
-            // the background. With it, the shell already is one, and painting a
-            // second opaque wash inside would simply hide it.
-            if !SystemGlass.isAvailable {
-                VisualEffectView(material: r.material).ignoresSafeArea()
-                if let tint = r.palette.tint {
-                    tint.opacity(r.palette.tintOpacity).ignoresSafeArea()
+        // No background of its own: the glass shell this is embedded in is the
+        // background, and any wash painted in here would only cover it up.
+        VStack(spacing: 0) {
+            header(r, mode: mode)
+            Divider().overlay(r.palette.foreground.opacity(0.12))
+            if let filling = model.filling {
+                fillingForm(filling, r)
+            } else {
+                switch mode {
+                case .duplicates: duplicateList(r)
+                case .byDomain:   domainList(r)
+                case .quickOpen:      quickOpenList(r)
+                case .search:     searchList(r)
                 }
             }
-
-            VStack(spacing: 0) {
-                header(r, mode: mode)
-                Divider().overlay(r.palette.foreground.opacity(0.12))
-                if let filling = model.filling {
-                    fillingForm(filling, r)
-                } else {
-                    switch mode {
-                    case .duplicates: duplicateList(r)
-                    case .byDomain:   domainList(r)
-                    case .quickOpen:      quickOpenList(r)
-                    case .search:     searchList(r)
-                    }
-                }
-                Divider().overlay(r.palette.foreground.opacity(0.12))
-                footer(r, mode: mode)
-            }
+            Divider().overlay(r.palette.foreground.opacity(0.12))
+            footer(r, mode: mode)
         }
         .frame(width: 640, height: 460)
-        // Clipped here regardless of the glass, because the glass does *not*
-        // clip what you hand it — its header only promises the content will be
-        // placed inside the effect. Anything in here that paints edge to edge
-        // (an NSScrollView draws a control background of its own) then shows
-        // its square corners poking out past the rounded glass, four of them,
-        // which reads as a rectangular frame drawn around the panel.
+        // Clipped even though the glass is already round, because the glass
+        // does *not* clip what you hand it — its header only promises the
+        // content will be placed inside the effect. Anything in here that
+        // paints edge to edge (an NSScrollView draws a control background of
+        // its own) then shows its square corners poking out past the rounded
+        // glass, four of them, which reads as a rectangular frame drawn around
+        // the panel.
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(SystemGlass.isAvailable
-                              ? Color.clear : r.palette.foreground.opacity(0.10))
-        )
         .onAppear { focusSoon() }
         .onChange(of: model.focusRequest) { _, _ in focusSoon() }
     }

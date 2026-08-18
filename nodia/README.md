@@ -15,8 +15,9 @@ from one prompt.
   last — and **⏎** opens it, switching to the tab if you already have one.
 - **⌘T** browse every quick-open template, **⌘D** duplicate clustering, **⌘G**
   by-domain browsing.
-- Themeable frosted-glass UI (10 palettes, 4 fonts, size) via the settings
-  window. Menu-bar icon: left-click to search, right-click for Settings / Quit.
+- Themeable glass UI (10 palettes, 4 fonts, size, tint strength) via the
+  settings window. Menu-bar icon: left-click to search, right-click for
+  Settings / Quit.
 
 ## Why search and saving live in one app
 
@@ -352,5 +353,10 @@ allow it. Until then, activation falls back to opening the URL in a new tab.
 
 ## Requirements
 
-macOS 14+, Swift 5.9+, the Arc browser, and an Obsidian vault (any folder of
-Markdown, really) for the saving half.
+macOS 26+ and the matching SDK (Xcode 26), the Arc browser, and an Obsidian
+vault (any folder of Markdown, really) for the saving half.
+
+The floor is 26 because the panel *is* a piece of the system glass —
+`NSGlassEffectView`, which contains the content instead of sitting behind it.
+There was a frosted-material fallback for older systems; it went away, because
+maintaining a second look nobody here runs cost more than it was worth.
