@@ -138,24 +138,6 @@ final class VaultStoreTests: XCTestCase {
         XCTAssertEqual(entry.title, "待办一号")
     }
 
-    /// The legacy quick-open file is Markdown of exactly the shape this index
-    /// parses, so it was being read as a pile of saved links — every template
-    /// showed up twice in ⌘⇧K, the second time as an "archive" entry whose URL
-    /// still contained `{placeholders}`.
-    func testLegacyQuickOpenFileIsNotIndexedAsSavedLinks() throws {
-        try """
-        - Metrics 服务大盘
-          - url: https://{site}/metrics/overview/server_overview?service={service}
-          - keywords: metrics, 监控
-        """.write(
-            to: root.appendingPathComponent(QuickOpenStore.legacyFileName),
-            atomically: true, encoding: .utf8
-        )
-
-        let s = try store()
-        XCTAssertTrue(s.allEntries().isEmpty, "快速打开的配置文件不该被当成收藏索引")
-    }
-
     func testSecondSaveOfSameURLIsReportedAsDuplicate() throws {
         let s = try store()
         _ = s.save([VaultLink(title: "A", url: "https://example.com/dup")])

@@ -74,7 +74,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
                 self?.confirmAndClose(cluster.duplicates,
                                       summary: "“\(cluster.keeper.title)” 的 \(cluster.duplicates.count) 个重复")
             },
-            onCommitFilling: { [weak self] value in self?.commitFilling(value) },
+            onTakeCandidate: { [weak self] choice in self?.model.takeCandidate(choice) },
             onOpenSettings: { [weak self] in self?.openSettings() }
         )
         let host = NSHostingView(rootView: root)
@@ -113,9 +113,12 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
                 case 9:  NSApp.sendAction(Selector(("paste:")), to: nil, from: nil); return nil      // ⌘V
                 case 6:  NSApp.sendAction(Selector((shift ? "redo:" : "undo:")), to: nil, from: nil); return nil // ⌘Z / ⌘⇧Z
                 case 32: self.model.query = ""; return nil                                           // ⌘U clear field
-                case 2:  self.model.toggleMode(); return nil                                         // ⌘D duplicates
-                case 5:  self.model.toggleDomainMode(); return nil                                   // Cmd+G by-domain
-                case 17: self.model.toggleQuickOpenMode(); return nil                                     // ⌘T quick open
+                // Mode switches would swap the list behind a form that stays
+                // on screen, leaving the footer describing one thing and the
+                // panel showing another.
+                case 2 where self.model.filling == nil: self.model.toggleMode(); return nil          // ⌘D duplicates
+                case 5 where self.model.filling == nil: self.model.toggleDomainMode(); return nil    // ⌘G by-domain
+                case 17 where self.model.filling == nil: self.model.toggleQuickOpenMode(); return nil // ⌘T quick open
                 default: break
                 }
             }
@@ -123,9 +126,15 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
             switch event.keyCode {
             case 125: self.model.moveSelection(1); return nil   // ↓
             case 126: self.model.moveSelection(-1); return nil  // ↑
+            case 48 where self.model.filling != nil:            // ⇥
+                // Taken from AppKit's own key-view loop on purpose: it would
+                // wander into the gear button and wrap in its own order, and
+                // the form wants exactly one cycle through the parameters.
+                self.model.focusNextField()
+                return nil
             case 36, 76:                                        // return / enter
                 if self.model.filling != nil {
-                    self.commitFillingSelection()
+                    self.openFilled()
                 } else if self.model.mode == .duplicates {
                     if cmd { self.dedupeAll() } else { self.dedupeSelectedCluster() }
                 } else {
@@ -158,31 +167,45 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
 
     private func activateSelected() {
         guard let tab = model.selectedTab else { return }
-        // A quick-open template isn't a URL yet — collect its parameters first.
-        if model.beginFilling(tab) { return }
-        activate(tab)
+        guard let template = model.template(for: tab) else { return activate(tab) }
+        // A template with parameters isn't a URL yet — collect them first. One
+        // without any already is, so asking would be a form with nothing on it.
+        if model.beginFilling(template) { return }
+        guard let url = URL(string: template.urlTemplate) else { return }
+        model.quickOpenState.recordOpen(template: template, values: [:])
+        openQuickOpen(url)
     }
 
-    /// Takes the highlighted candidate for the current parameter (keyboard).
-    private func commitFillingSelection() {
-        let options = model.fillingOptions
-        // The value, never the label: "VA" is what you read, `us` is what the
-        // URL needs.
-        let value = options.indices.contains(model.selectedIndex)
-            ? options[model.selectedIndex].value
-            : model.query.trimmingCharacters(in: .whitespaces)
-        commitFilling(value)
-    }
-
-    /// Commits one parameter value. When it was the last one, the finished URL
-    /// opens and the panel closes.
-    private func commitFilling(_ value: String) {
-        guard !value.isEmpty else { return }
-        if let url = model.commitFillingValue(value) {
-            hide()
-            NSWorkspace.shared.open(url)
-            Log.write("quick-open: opened \(url.absoluteString)")
+    /// ⏎ from the form: open with what's there.
+    ///
+    /// The one thing that stops it is a parameter still holding nothing, and
+    /// then it jumps you to that field rather than refusing — the answer to
+    /// "why won't it open" should be the cursor sitting in the reason.
+    private func openFilled() {
+        guard let filling = model.filling else { return }
+        if let blank = model.firstBlankField {
+            if blank != filling.focus { model.focusField(blank) }
+            return
         }
+        guard let url = model.fillingURL else { return }
+        model.quickOpenState.recordOpen(template: filling.template, values: filling.values)
+        model.cancelFilling()
+        openQuickOpen(url)
+    }
+
+    /// Raise the tab already showing this URL, or open it.
+    ///
+    /// Switching counts as a use of the template either way — it's how you got
+    /// there, and the ranking should say so.
+    private func openQuickOpen(_ url: URL) {
+        hide()
+        if let live = model.liveTab(for: url) {
+            Log.write("quick-open: switching to open tab \(url.absoluteString)")
+            if case .permissionDenied = Activator.activate(live) { presentPermissionAlert() }
+            return
+        }
+        NSWorkspace.shared.open(url)
+        Log.write("quick-open: opened \(url.absoluteString)")
     }
 
     private func activate(_ tab: TabEntry) {

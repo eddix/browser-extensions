@@ -25,20 +25,13 @@ final class TabListModel: ObservableObject {
 
     private var templates: [QuickOpenTemplate] = []
 
-    /// Set while filling in a template's parameters. The search field becomes the
-    /// input for one parameter at a time, so the same keyboard drives both
-    /// finding a template and completing it.
-    @Published private(set) var filling: Filling?
+    let quickOpenState = QuickOpenState()
 
-    struct Filling {
-        let template: QuickOpenTemplate
-        var values: [String: String] = [:]
-        var index: Int = 0
+    /// Set while filling in a template's parameters. The state machine itself
+    /// lives in NodiaCore (`QuickOpenForm`) so its rules — which are fussier
+    /// than they look — can be tested without standing up a window.
+    @Published private(set) var filling: QuickOpenForm?
 
-        var parameter: String { template.parameters[index] }
-        var isLast: Bool { index == template.parameters.count - 1 }
-        var progress: String { "\(index + 1)/\(template.parameters.count)" }
-    }
     private let favicons: FaviconStore?
     private var iconCache: [String: NSImage] = [:]
 
@@ -66,11 +59,25 @@ final class TabListModel: ObservableObject {
                 title: t.name,
                 url: t.urlTemplate,
                 spaceTitle: "快速打开",
-                lastActiveAt: 0,
+                // A template has no "last active" the way a tab does, so this
+                // slot carries its usage score instead — the same question
+                // (which of these did you mean) asked of a different kind of
+                // row. Scores are small and tab timestamps are epoch seconds,
+                // so templates still sit below live tabs on an empty query.
+                lastActiveAt: quickOpenState.score(named: t.name),
                 origin: .quickOpen,
                 subtitle: t.note ?? (params.isEmpty ? t.urlTemplate : "参数：\(params)"),
                 note: (t.keywords + [t.urlTemplate]).joined(separator: " ")
             )
+        }
+        // Most-used first, so ⌘T settles into an order worth learning by
+        // position. Name breaks ties — including the all-zeros tie on a fresh
+        // install, where an unstable sort would otherwise reshuffle the list
+        // every time you opened it.
+        quickOpenRows.sort {
+            $0.lastActiveAt != $1.lastActiveAt
+                ? $0.lastActiveAt > $1.lastActiveAt
+                : $0.title < $1.title
         }
         Log.write("reload: \(templates.count) quick-open templates")
     }
@@ -80,50 +87,55 @@ final class TabListModel: ObservableObject {
         return templates.first { "qo:\($0.name)" == entry.id }
     }
 
-    /// Enters parameter-filling mode. Returns false if this isn't a template.
+    /// Enters the parameter form. Returns false if this isn't a template with
+    /// parameters — one without any is just a URL, and should open.
     @discardableResult
     func beginFilling(_ entry: TabEntry) -> Bool {
-        guard let t = template(for: entry), !t.parameters.isEmpty else { return false }
-        filling = Filling(template: t)
-        query = ""
-        selectedIndex = 0
+        guard let t = template(for: entry) else { return false }
+        return beginFilling(t)
+    }
+
+    @discardableResult
+    func beginFilling(_ t: QuickOpenTemplate) -> Bool {
+        guard !t.parameters.isEmpty else { return false }
+        filling = QuickOpenForm(template: t, state: quickOpenState)
         return true
     }
 
-    /// Candidates for the parameter being filled, narrowed by what's typed.
-    ///
-    /// Free input is modelled as a single candidate equal to what you typed, so
-    /// picking from a list and typing a value are the same gesture downstream.
-    /// Matching looks at the label *and* the value: you might remember either
-    /// "VA" or the `us` it expands to.
-    var fillingOptions: [Choice] {
-        guard let filling else { return [] }
-        let all = filling.template.choices(for: filling.parameter)
-        let q = query.trimmingCharacters(in: .whitespaces)
-        if all.isEmpty { return q.isEmpty ? [] : [Choice(label: q, value: q)] }
-        guard !q.isEmpty else { return all }
-        let lowered = q.lowercased()
-        let matched = all.filter {
-            $0.label.lowercased().contains(lowered) || $0.value.lowercased().contains(lowered)
-        }
-        // Typed something that isn't in the list — still allow it.
-        return matched.isEmpty ? [Choice(label: q, value: q)] : matched
+    func fieldText(_ parameter: String) -> String { filling?.text(of: parameter) ?? "" }
+    var fillingCandidates: [Choice] { filling?.candidates ?? [] }
+    var fillingHasCandidateList: Bool { filling?.hasCandidateList ?? false }
+    var fillingHighlight: Int { filling?.highlighted ?? 0 }
+    var fillingURL: URL? { filling?.url }
+
+    /// A tab already showing exactly this URL, if there is one.
+    func liveTab(for url: URL) -> TabEntry? {
+        QuickOpenMatch.liveTab(for: url, in: arcTabs)
+    }
+    var firstBlankField: Int? { filling?.firstBlank }
+
+    func setDraft(_ text: String) {
+        guard var f = filling, text != f.draft else { return }
+        f.type(text)
+        filling = f
     }
 
-    /// Commits one value. Returns the URL once every parameter is filled.
-    func commitFillingValue(_ value: String) -> URL? {
-        guard var f = filling else { return nil }
-        f.values[f.parameter] = value
-        if f.isLast {
-            filling = nil
-            query = ""
-            return f.template.expand(f.values)
-        }
-        f.index += 1
+    func takeCandidate(_ choice: Choice) {
+        guard var f = filling else { return }
+        f.take(choice)
         filling = f
-        query = ""
-        selectedIndex = 0
-        return nil
+    }
+
+    func focusNextField() {
+        guard var f = filling else { return }
+        f.focusNext()
+        filling = f
+    }
+
+    func focusField(_ index: Int) {
+        guard var f = filling else { return }
+        f.focusField(index)
+        filling = f
     }
 
     func cancelFilling() {
@@ -187,10 +199,9 @@ final class TabListModel: ObservableObject {
     var results: [TabEntry] { FuzzyMatcher.rank(tabs, query: query) }
 
     func moveSelection(_ delta: Int) {
-        if filling != nil {
-            let count = fillingOptions.count
-            guard count > 0 else { return }
-            selectedIndex = max(0, min(count - 1, selectedIndex + delta))
+        if var f = filling {
+            f.moveHighlight(delta)
+            filling = f
             return
         }
         let count: Int

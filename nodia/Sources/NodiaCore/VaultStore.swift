@@ -153,16 +153,8 @@ public final class VaultStore: @unchecked Sendable {
             return
         }
 
-        // The legacy quick-open file is Markdown of exactly the shape this
-        // parser looks for — `- Name` with an indented `- url: https://…` —
-        // so it was being indexed as a pile of saved links. Every template
-        // then appeared twice in ⌘⇧K: once as itself, and once as an "archive"
-        // entry whose URL still had `{placeholders}` in it and opened nothing.
-        let legacy = (QuickOpenStore.legacyFileName as NSString).lastPathComponent
-
         var fileCount = 0
-        for case let url as URL in walker
-        where url.pathExtension == "md" && url.lastPathComponent != legacy {
+        for case let url as URL in walker where url.pathExtension == "md" {
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
             fileCount += 1
             ingest(text: text, relativePath: relativePath(url))

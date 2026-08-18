@@ -1,0 +1,85 @@
+import XCTest
+@testable import NodiaCore
+
+final class QuickOpenMatchTests: XCTestCase {
+
+    private func tab(_ url: String, space: String = "Work") -> TabEntry {
+        TabEntry(id: url, title: "T", url: url, spaceTitle: space, lastActiveAt: 1)
+    }
+
+    private func url(_ s: String) throws -> URL { try XCTUnwrap(URL(string: s)) }
+
+    func testFindsTheTabShowingExactlyThisURL() throws {
+        let tabs = [tab("https://example.com/a"), tab("https://ledger.example.net/#/sg/detail/1")]
+        let hit = QuickOpenMatch.liveTab(for: try url("https://ledger.example.net/#/sg/detail/1"),
+                                         in: tabs)
+        XCTAssertEqual(hit?.url, "https://ledger.example.net/#/sg/detail/1")
+    }
+
+    func testTrailingSlashDoesNotCountAsADifferentPage() throws {
+        let hit = QuickOpenMatch.liveTab(for: try url("https://example.com/console"),
+                                         in: [tab("https://example.com/console/")])
+        XCTAssertNotNil(hit)
+    }
+
+    /// The trap that ruled out reusing `VaultStore.normalize`: it truncates at
+    /// `#`, so every task on a fragment-routed platform would look like the
+    /// same page. Asking for task 1 would have switched you to task 2.
+    func testFragmentIsPartOfTheIdentity() throws {
+        let open = tab("https://ledger.example.net/#/sg/detail/222")
+        XCTAssertNil(
+            QuickOpenMatch.liveTab(for: try url("https://ledger.example.net/#/sg/detail/111"),
+                                   in: [open]),
+            "fragment 不同就是不同的页面"
+        )
+        XCTAssertEqual(VaultStore.normalize(open.url), "https://ledger.example.net",
+                       "对照：收藏用的归一化确实会把它们抹成同一个")
+    }
+
+    /// A dashboard's subject lives in the query string, so it's part of the
+    /// identity too — otherwise one service's board would switch you to
+    /// another's.
+    func testQueryIsPartOfTheIdentity() throws {
+        let open = tab("https://console.example.com/metrics?service=team.shop.api")
+        XCTAssertNil(
+            QuickOpenMatch.liveTab(
+                for: try url("https://console.example.com/metrics?service=team.trade.checkout"),
+                in: [open]
+            )
+        )
+    }
+
+    /// Two views of the same board over different windows are two pages. They
+    /// look alike; they aren't, and guessing otherwise means silently showing
+    /// you the wrong hour.
+    func testDifferentTimeWindowsAreDifferentPages() throws {
+        let open = tab("https://console.example.com/metrics?service=a&from=now-1h")
+        XCTAssertNil(
+            QuickOpenMatch.liveTab(
+                for: try url("https://console.example.com/metrics?service=a&from=now-24h"),
+                in: [open]
+            )
+        )
+    }
+
+    /// Top Apps hang off the sidebar root, so Arc's `spaces → tabs` can't reach
+    /// them: "switching" means walking every Space for several seconds and then
+    /// opening the URL anyway. Skip straight to opening it.
+    func testTopAppsAreNotOfferedAsASwitchTarget() throws {
+        let favourite = tab("https://example.com/app", space: SidebarParser.topAppsSpaceTitle)
+        XCTAssertNil(QuickOpenMatch.liveTab(for: try url("https://example.com/app"),
+                                            in: [favourite]))
+    }
+
+    /// A saved link is a line in a Markdown file, not a window to raise.
+    func testSavedLinksAreNotSwitchTargets() throws {
+        let saved = TabEntry(id: "v", title: "T", url: "https://example.com/a",
+                             spaceTitle: "档案", lastActiveAt: 0, origin: .vault)
+        XCTAssertNil(QuickOpenMatch.liveTab(for: try url("https://example.com/a"), in: [saved]))
+    }
+
+    func testNoMatchWhenNothingIsOpen() throws {
+        XCTAssertNil(QuickOpenMatch.liveTab(for: try url("https://example.com/x"),
+                                            in: [tab("https://example.com/y")]))
+    }
+}

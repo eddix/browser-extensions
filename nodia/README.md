@@ -11,8 +11,8 @@ from one prompt.
 - Matched characters are highlighted; rows show favicon + title + Space (for a
   live tab) or kind + summary (for a saved link).
 - **快速打开** — one entry for a whole family of platform URLs. Search its
-  name, then fill the parameters one at a time (candidates are a list;
-  anything without one takes free input), and it opens.
+  name, then fill in a small form — every field prefilled with what you used
+  last — and **⏎** opens it, switching to the tab if you already have one.
 - **⌘T** browse every quick-open template, **⌘D** duplicate clustering, **⌘G**
   by-domain browsing.
 - Themeable frosted-glass UI (7 palettes, 4 fonts, size) via the settings
@@ -213,11 +213,65 @@ didn't work without it:
   and `{ "use": "region" }` refers to it — five regions across six templates
   was already six chances to get one wrong.
 
+### The form
+
+Picking a template opens every parameter at once, each prefilled with what you
+last put in a parameter of that name — so the common case is ⏎ ⏎, and the
+uncommon one is typing into the single field that differs.
+
+| | |
+|---|---|
+| **⏎** | open, with whatever the fields say right now |
+| **⇥** | next field, wrapping; keeps whatever the highlight is on |
+| **↑↓** | walk the candidates under the focused field |
+| **esc** | back to the list you came from |
+
+⏎ means *open* rather than *next field*, which is only possible because no
+field is ever empty. The one exception is free input you've never used, and
+there ⏎ moves the cursor into that field instead of refusing — the answer to
+"why won't it open" should be the cursor sitting in the reason. The footer
+shows the URL as it currently stands, built from the same values that opening
+uses, so it can't drift from what actually happens.
+
+Prefill is remembered per parameter *name*, across templates: having just
+looked at a namespace's config, its change history is the next thing you want
+and it's the same namespace. Two templates can share a name without sharing a
+meaning, though — `region` means one set of values on one platform and another
+set elsewhere — so a remembered value that isn't among *this* template's
+candidates is dropped rather than forced into a URL that can't work.
+
+Free input keeps its last five values as that field's candidate list, since a
+parameter with no configured list still has a history.
+
+### Which one you meant
+
 **⌘T** lists every template — plain search finds them too, but only if you
 remember one exists, and "what can I open?" isn't a question search can answer.
+That list is ordered by use: opening one adds 1 to its score and fades every
+score by 2%, so the order blends how often and how recently in a single number.
+
+Decay counts *openings*, not days. Come back from two weeks away and nothing
+was opened in the meantime, so the list is exactly as you left it — ordinary
+time-based decay would have faded everything toward zero and greeted you with
+an order carrying no information. A score halves every ~34 openings, long
+enough for the top few to hold still and be worth learning by position.
+
 In plain ⌘⇧K a template outranks a saved link on a tie but loses to an open
 tab: reusing the window you already have is the point, and templates have ⌘T of
-their own besides.
+their own besides. Templates tied with each other fall back to that same score.
+
+### Opening
+
+If a tab is already showing the exact URL, quick open raises it instead of
+adding a second copy. "Exact" includes the query string and the fragment,
+unlike the normalization used for saved links — platforms that route entirely
+through the fragment (`…/#/sg/detail/743188920`) would otherwise all collapse
+to their bare domain, and asking for one task would switch you to another.
+
+Two exceptions open a new tab without trying: **Top Apps** (the global
+favourites row hangs off the sidebar root rather than any Space, and Arc's
+AppleScript can only reach tabs through `spaces → tabs`), and anything whose
+window Arc can't find, which falls back the same way activation always has.
 
 ### Why JSON and not Markdown
 
@@ -235,8 +289,10 @@ is a project of its own. The cost, stated plainly: JSON has no comments.
 Per-template `note` covers explaining an entry; file-level commentary has
 nowhere to go.
 
-The old `Bookmark/00-Jumps.md` is still read when no JSON file exists, so an
-existing vault keeps working untouched.
+Usage — the scores above, the remembered values, the input history — stays out
+of this file and in UserDefaults. It changes on every open, and rewriting a
+file you hand-edit that often is the round-trip risk picking JSON was meant to
+avoid.
 
 ## How it works
 
@@ -271,7 +327,7 @@ See [DESIGN.md](./DESIGN.md) for the tab-parsing details.
 ```sh
 swift run nodia              # run from source
 swift run nodia-probe        # headless check: tabs, favicons, vault index
-swift test                   # 147 tests, incl. HTTP boundary + summary routing
+swift test                   # 189 tests, incl. HTTP boundary + summary routing
 ```
 
 ## Install as an app

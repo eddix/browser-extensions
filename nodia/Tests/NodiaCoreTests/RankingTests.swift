@@ -58,6 +58,32 @@ final class RankingTests: XCTestCase {
                        "同分时：已打开标签 > 模板 > 档案收藏")
     }
 
+    /// Two templates that tie on everything else are ordered by how much you
+    /// use them — the `lastActiveAt` slot carries a usage score for a row that
+    /// has no "last active" of its own.
+    func testMoreUsedTemplateWinsTheTie() throws {
+        let often = TabEntry(id: "qo:A", title: "ConfigHub 配置", url: "https://x.com/{a}",
+                             spaceTitle: "快速打开", lastActiveAt: 4.2, origin: .quickOpen)
+        let rarely = TabEntry(id: "qo:B", title: "ConfigHub 权限", url: "https://x.com/{a}",
+                              spaceTitle: "快速打开", lastActiveAt: 0.3, origin: .quickOpen)
+        let ranked = FuzzyMatcher.rank([rarely, often], query: "confighub")
+        XCTAssertEqual(ranked.map(\.title), ["ConfigHub 配置", "ConfigHub 权限"])
+    }
+
+    /// Swift's sort isn't stable, so rows that tie on *everything* — two unused
+    /// templates on a fresh install, say — used to come back in whatever order
+    /// the sort happened to leave them, differing between keystrokes.
+    func testFullyTiedRowsComeBackInAStableOrder() throws {
+        let rows = (1...6).map {
+            TabEntry(id: "qo:\($0)", title: "模板 \($0)", url: "https://x.com/a",
+                     spaceTitle: "快速打开", lastActiveAt: 0, origin: .quickOpen)
+        }
+        let first = FuzzyMatcher.rank(rows, query: "模板").map(\.id)
+        XCTAssertEqual(FuzzyMatcher.rank(rows.reversed(), query: "模板").map(\.id), first,
+                       "同分行的顺序不该取决于输入顺序")
+        XCTAssertEqual(first, rows.map(\.id).sorted())
+    }
+
     /// A live tab beats a saved copy of the same page: switching to an open
     /// window beats reopening the URL.
     func testLiveTabOutranksSavedLinkOnATie() throws {

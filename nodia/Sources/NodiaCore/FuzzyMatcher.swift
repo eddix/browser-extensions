@@ -45,7 +45,18 @@ public enum FuzzyMatcher {
                 if a.0.origin != b.0.origin {
                     return originPriority(a.0.origin) < originPriority(b.0.origin)
                 }
-                return a.0.lastActiveAt > b.0.lastActiveAt
+                // For a tab this is when you last looked at it; for a template
+                // it's how much you use it (see TabListModel). Either way it's
+                // "which of these did you mean", measured the way that kind of
+                // row can be measured.
+                if a.0.lastActiveAt != b.0.lastActiveAt {
+                    return a.0.lastActiveAt > b.0.lastActiveAt
+                }
+                // Swift's sort isn't stable, so without a total order two rows
+                // that tie everything can swap places between keystrokes. This
+                // tiebreak is arbitrary; the point is that it's the *same*
+                // arbitrary every time.
+                return a.0.id < b.0.id
             }
             .map(\.0)
     }

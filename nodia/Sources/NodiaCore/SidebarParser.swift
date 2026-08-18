@@ -11,6 +11,11 @@ import Foundation
 /// (small) one, and picking just the first silently dropped the real sidebar.
 public enum SidebarParser {
 
+    /// Space name given to the global favourites row, which belongs to no
+    /// space of its own.
+    public static let topAppsSpaceTitle = "Top Apps"
+
+
     public enum ParseError: Error { case unreadable, badShape }
 
     public static func parse(url: URL = ArcPaths.storableSidebar) throws -> [TabEntry] {
@@ -49,11 +54,15 @@ public enum SidebarParser {
                     i += 2
                 }
             }
-            // "Top Apps" are the global pinned apps shown above all spaces.
+            // Top Apps are the global pinned apps shown above every space.
+            // They hang off the sidebar root rather than any space, which is
+            // also why AppleScript can't reach them — see QuickOpenMatch.
             let topRoots = box["topAppsContainerIDs"] as? [Any] ?? []
             var ti = 1
             while ti < topRoots.count {
-                if let rootId = topRoots[ti] as? String { rootToSpace[rootId] = "Top Apps" }
+                if let rootId = topRoots[ti] as? String {
+                    rootToSpace[rootId] = topAppsSpaceTitle
+                }
                 ti += 2
             }
 

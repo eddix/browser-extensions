@@ -108,9 +108,14 @@ public struct QuickOpenTemplate: Sendable, Equatable {
 
     /// Substitutes values and returns the URL to open. A missing value leaves
     /// its placeholder in place, which yields nil rather than a broken URL.
+    ///
+    /// An *empty* value counts as missing. The form hands over every parameter
+    /// from the moment it opens, blanks included, and substituting those would
+    /// quietly produce `…/detail/` — a URL that looks finished, parses fine,
+    /// and goes nowhere.
     public func expand(_ values: [String: String]) -> URL? {
         var filled = urlTemplate
-        for (key, value) in values {
+        for (key, value) in values where !value.isEmpty {
             filled = filled.replacingOccurrences(of: "{\(key)}", with: Self.encode(value))
         }
         guard !filled.contains("{"), let url = URL(string: filled), url.host != nil else {
@@ -150,9 +155,6 @@ public struct QuickOpenTemplate: Sendable, Equatable {
 public struct QuickOpenStore: Sendable {
 
     public static let fileName = "Bookmark/00-QuickOpen.json"
-    /// The Markdown format this replaced. Still read when the JSON file is
-    /// absent, so an existing vault keeps working untouched.
-    public static let legacyFileName = "Bookmark/00-Jumps.md"
 
     public struct LoadResult: Sendable {
         public var templates: [QuickOpenTemplate]
@@ -168,15 +170,10 @@ public struct QuickOpenStore: Sendable {
     }
 
     public static func load(vaultRoot: URL) -> LoadResult {
-        let json = vaultRoot.appendingPathComponent(fileName)
-        if let data = try? Data(contentsOf: json) {
-            return parse(data)
+        guard let data = try? Data(contentsOf: vaultRoot.appendingPathComponent(fileName)) else {
+            return LoadResult()
         }
-        let legacy = vaultRoot.appendingPathComponent(legacyFileName)
-        if let text = try? String(contentsOf: legacy, encoding: .utf8) {
-            return LoadResult(templates: parseLegacyMarkdown(text))
-        }
-        return LoadResult()
+        return parse(data)
     }
 
     // MARK: - JSON
@@ -255,67 +252,6 @@ public struct QuickOpenStore: Sendable {
             templates.append(template)
         }
         return LoadResult(templates: templates, problems: problems)
-    }
-
-    // MARK: - Legacy Markdown
-
-    /// Reads the original bullet format so an existing vault keeps working.
-    /// Candidates there were plain strings, so label and value are the same.
-    static func parseLegacyMarkdown(_ text: String) -> [QuickOpenTemplate] {
-        var templates: [QuickOpenTemplate] = []
-        var name: String?
-        var url: String?
-        var choices: [String: [Choice]] = [:]
-        var keywords: [String] = []
-        var note: String?
-
-        func flush() {
-            defer { name = nil; url = nil; choices = [:]; keywords = []; note = nil }
-            guard let name, let url, !url.isEmpty else { return }
-            templates.append(QuickOpenTemplate(
-                name: name, urlTemplate: url,
-                params: choices.mapValues { ParameterKind.choices($0) },
-                keywords: keywords, note: note
-            ))
-        }
-
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = TextClean.removeInvisible(String(rawLine))
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let indented = line.hasPrefix(" ") || line.hasPrefix("\t")
-
-            if !indented, trimmed.hasPrefix("- ") {
-                flush()
-                name = TextClean.strip(String(trimmed.dropFirst(2)))
-                continue
-            }
-            guard indented, trimmed.hasPrefix("- "),
-                  let colon = trimmed.firstIndex(of: ":") else { continue }
-
-            let key = TextClean.strip(
-                String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<colon])
-            )
-            let value = TextClean.strip(String(trimmed[trimmed.index(after: colon)...]))
-            guard !key.isEmpty else { continue }
-
-            switch key {
-            case "url":
-                url = value
-            case "note":
-                note = value.isEmpty ? nil : value
-            case "keywords":
-                keywords = value.split(separator: ",").map { TextClean.strip(String($0)) }
-                    .filter { !$0.isEmpty }
-            default:
-                let list = value.split(separator: ",").map { TextClean.strip(String($0)) }
-                    .filter { !$0.isEmpty }
-                if !list.isEmpty {
-                    choices[key] = list.map { Choice(label: $0, value: $0) }
-                }
-            }
-        }
-        flush()
-        return templates
     }
 
     /// Written on first run so the format is discoverable by example rather

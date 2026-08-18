@@ -9,9 +9,10 @@ struct SearchView: View {
     @ObservedObject var themeStore: ThemeStore
     var onActivate: (TabEntry) -> Void
     var onDedupeCluster: (TabCluster) -> Void
-    var onCommitFilling: (String) -> Void
+    var onTakeCandidate: (Choice) -> Void
     var onOpenSettings: () -> Void
     @FocusState private var searchFocused: Bool
+    @FocusState private var focusedParameter: String?
 
     var body: some View {
         let r = themeStore.resolved
@@ -26,8 +27,8 @@ struct SearchView: View {
             VStack(spacing: 0) {
                 header(r, mode: mode)
                 Divider().overlay(r.palette.foreground.opacity(0.12))
-                if model.filling != nil {
-                    fillingList(r)
+                if let filling = model.filling {
+                    fillingForm(filling, r)
                 } else {
                     switch mode {
                     case .duplicates: duplicateList(r)
@@ -56,23 +57,19 @@ struct SearchView: View {
     // enough); duplicates/byDomain show a tinted context chip instead, so the
     // active mode is visible at a glance.
     private func header(_ r: ResolvedTheme, mode: TabListModel.Mode) -> some View {
-        let filling = model.filling
-        let placeholder: String
-        if let filling {
-            let hasChoices = !filling.template.choices(for: filling.parameter).isEmpty
-            placeholder = hasChoices ? "选择或输入 \(filling.parameter)…" : "输入 \(filling.parameter)…"
-        } else {
-            switch mode {
-            case .search:     placeholder = "搜索标签页…"
-            case .duplicates: placeholder = "筛选重复…"
-            case .byDomain:   placeholder = "按域名筛选…"
-            case .quickOpen:  placeholder = "筛选快速打开…"
-            }
-        }
-        return HStack(spacing: 10) {
-            if let filling {
-                modeChip("\(filling.template.name) · \(filling.parameter) \(filling.progress)",
-                         icon: "arrow.turn.down.right", r)
+        HStack(spacing: 10) {
+            // The form owns the keyboard while it's up: one search field plus
+            // several parameter fields would be two things competing for focus,
+            // and the search field has nothing to search at that point.
+            if let filling = model.filling {
+                modeChip(filling.template.name, icon: "bolt", r)
+                if let note = filling.template.note {
+                    Text(note)
+                        .lineLimit(1).truncationMode(.tail)
+                        .font(r.subtitleFont)
+                        .foregroundStyle(r.palette.secondary)
+                }
+                Spacer(minLength: 8)
             } else {
                 switch mode {
                 case .duplicates: modeChip("重复标签", icon: "rectangle.on.rectangle", r)
@@ -80,12 +77,12 @@ struct SearchView: View {
                 case .quickOpen:  modeChip("快速打开", icon: "bolt", r)
                 case .search:     EmptyView()
                 }
+                TextField(Self.placeholder(for: mode), text: $model.query)
+                    .textFieldStyle(.plain)
+                    .font(r.searchFont)
+                    .foregroundStyle(r.palette.foreground)
+                    .focused($searchFocused)
             }
-            TextField(placeholder, text: $model.query)
-                .textFieldStyle(.plain)
-                .font(r.searchFont)
-                .foregroundStyle(r.palette.foreground)
-                .focused($searchFocused)
             Button(action: onOpenSettings) {
                 Image(systemName: "gearshape")
                     .font(.system(size: 13))
@@ -96,6 +93,15 @@ struct SearchView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
+    }
+
+    private static func placeholder(for mode: TabListModel.Mode) -> String {
+        switch mode {
+        case .search:     return "搜索标签页…"
+        case .duplicates: return "筛选重复…"
+        case .byDomain:   return "按域名筛选…"
+        case .quickOpen:  return "筛选快速打开…"
+        }
     }
 
     private func modeChip(_ label: String, icon: String, _ r: ResolvedTheme) -> some View {
@@ -112,73 +118,142 @@ struct SearchView: View {
 
     // MARK: search mode
 
-    /// Candidates for the parameter being filled. A parameter with no
-    /// candidate list shows whatever you type, so free input and pick-from-list
-    /// are the same gesture.
-    private func fillingList(_ r: ResolvedTheme) -> some View {
-        let options = model.fillingOptions
-        let known = model.filling.map { !$0.template.choices(for: $0.parameter).isEmpty } ?? false
+    /// Every parameter at once, with the candidates for whichever one has the
+    /// keyboard underneath.
+    ///
+    /// One field at a time meant you couldn't see what you'd already chosen,
+    /// couldn't go back to change it, and paid a keystroke per parameter even
+    /// when every answer was the one you gave last time.
+    private func fillingForm(_ filling: QuickOpenForm, _ r: ResolvedTheme) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(filling.parameters.enumerated()), id: \.element) { index, parameter in
+                    fillingField(parameter, index: index, filling: filling, r)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+
+            candidateList(r)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Focus follows the model, and the model follows clicks — kept one-way
+        // in each direction so the two can't ping-pong.
+        .onAppear { focusedParameter = filling.parameter }
+        .onChange(of: model.filling?.parameter) { _, p in
+            if focusedParameter != p { focusedParameter = p }
+        }
+        .onChange(of: focusedParameter) { _, p in
+            guard let p, p != model.filling?.parameter,
+                  let i = model.filling?.parameters.firstIndex(of: p) else { return }
+            model.focusField(i)
+        }
+    }
+
+    private func fillingField(
+        _ parameter: String, index: Int, filling: QuickOpenForm, _ r: ResolvedTheme
+    ) -> some View {
+        let focused = parameter == filling.parameter
+        return HStack(spacing: 10) {
+            Text(parameter)
+                .font(r.subtitleFont)
+                .foregroundStyle(focused ? r.palette.accent : r.palette.secondary)
+                .lineLimit(1)
+                .frame(width: 96, alignment: .trailing)
+            TextField("", text: Binding(
+                get: { model.fieldText(parameter) },
+                // Only the focused field is an input; the others are just
+                // showing what they hold.
+                set: { if focused { model.setDraft($0) } }
+            ))
+            .textFieldStyle(.plain)
+            .font(r.titleFont)
+            .foregroundStyle(r.palette.foreground)
+            .focused($focusedParameter, equals: parameter)
+            // A value that reads nothing like what the URL gets deserves to
+            // say so on the same line, not only in the candidate list.
+            let value = filling.values[parameter] ?? ""
+            if !value.isEmpty && value != model.fieldText(parameter) {
+                Text(value)
+                    .font(r.captionFont)
+                    .foregroundStyle(r.palette.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: 200, alignment: .trailing)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(focused ? r.palette.selection : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { model.focusField(index) }
+    }
+
+    private func candidateList(_ r: ResolvedTheme) -> some View {
+        let candidates = model.fillingCandidates
+        let known = model.fillingHasCandidateList
         return Group {
-            if options.isEmpty {
+            if candidates.isEmpty {
                 VStack(spacing: 6) {
-                    Image(systemName: "keyboard").font(.system(size: 28))
-                        .foregroundStyle(r.palette.secondary)
-                    Text(known ? "无匹配的候选值" : "输入一个值，回车继续")
+                    Image(systemName: known ? "magnifyingglass" : "keyboard")
+                        .font(.system(size: 22)).foregroundStyle(r.palette.secondary)
+                    Text(known ? "无匹配的候选值" : "自由输入，⏎ 打开")
                         .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(Array(options.enumerated()), id: \.element) { index, option in
-                                HStack(spacing: 8) {
-                                    Image(systemName: known ? "circle.fill" : "pencil")
-                                        .font(.system(size: known ? 6 : 10))
-                                        .foregroundStyle(r.palette.secondary)
-                                        .frame(width: 14)
-                                    Text(option.label)
-                                        .font(r.titleFont)
-                                        .foregroundStyle(r.palette.foreground)
-                                    // Show what it expands to when they differ —
-                                    // otherwise "VA" gives no hint that the URL
-                                    // will say `us`.
-                                    if option.label != option.value {
-                                        Text(option.value)
-                                            .font(r.subtitleFont)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(known ? "候选" : "最近用过")
+                        .font(r.captionFont)
+                        .foregroundStyle(r.palette.secondary)
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 4)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 2) {
+                                ForEach(Array(candidates.enumerated()), id: \.element) { i, c in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: known ? "circle.fill" : "clock")
+                                            .font(.system(size: known ? 6 : 10))
                                             .foregroundStyle(r.palette.secondary)
+                                            .frame(width: 14)
+                                        Text(c.label)
+                                            .font(r.titleFont)
+                                            .foregroundStyle(r.palette.foreground)
+                                        if c.label != c.value {
+                                            Text(c.value)
+                                                .font(r.subtitleFont)
+                                                .foregroundStyle(r.palette.secondary)
+                                        }
+                                        Spacer()
                                     }
-                                    Spacer()
-                                    if !known {
-                                        Text("自由输入")
-                                            .font(r.subtitleFont)
-                                            .foregroundStyle(r.palette.secondary)
-                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(i == model.fillingHighlight ? r.palette.selection : .clear)
+                                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                                    .contentShape(Rectangle())
+                                    // Identity is the candidate, never its
+                                    // position — the same rule every other list
+                                    // here follows, and for the same reason.
+                                    .id(c.value)
+                                    .onTapGesture { onTakeCandidate(c) }
                                 }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(index == model.selectedIndex ? r.palette.selection : .clear)
-                                .clipShape(RoundedRectangle(cornerRadius: 7))
-                                .contentShape(Rectangle())
-                                // Same identity rule as every other list here:
-                                // the option itself, not its position.
-                                .id(option.value)
-                                .onTapGesture { onCommitFilling(option.value) }
                             }
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 6)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                    }
-                    .onChange(of: model.selectedIndex) { _, i in
-                        guard options.indices.contains(i) else { return }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(options[i].value, anchor: .center)
+                        .onChange(of: model.fillingHighlight) { _, i in
+                            guard candidates.indices.contains(i) else { return }
+                            withAnimation(.easeOut(duration: 0.12)) {
+                                proxy.scrollTo(candidates[i].value, anchor: .center)
+                            }
                         }
                     }
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     /// Every quick-open template. Plain search surfaces these too, but only once
@@ -393,6 +468,18 @@ struct SearchView: View {
     // (2-3 max — arrows/esc are muscle memory, not worth the clutter).
     private func footer(_ r: ResolvedTheme, mode: TabListModel.Mode) -> some View {
         HStack(spacing: 14) {
+            if model.filling != nil {
+                // The URL as it stands, and it is literally what ⏎ opens —
+                // built from the same values, not assembled a second time.
+                Text(model.fillingURL?.absoluteString ?? "还缺一个值")
+                    .lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(
+                        model.fillingURL == nil ? r.palette.secondary : r.palette.foreground
+                    )
+                Spacer(minLength: 8)
+                KeyHint(label: "打开", keys: ["⏎"], theme: r)
+                KeyHint(label: "下一个", keys: ["⇥"], theme: r)
+            } else {
             switch mode {
             case .duplicates:
                 Text("\(model.clusters.count) 组重复 · 可清理 \(model.redundantCount) 个")
@@ -418,6 +505,7 @@ struct SearchView: View {
                 KeyHint(label: "域名", keys: ["⌘", "G"], theme: r)
                 KeyHint(label: "去重", keys: ["⌘", "D"], theme: r)
             }
+            }
         }
         .font(r.captionFont)
         .foregroundStyle(r.palette.secondary)
@@ -426,7 +514,9 @@ struct SearchView: View {
     }
 
     private func focusSoon() {
-        DispatchQueue.main.async { searchFocused = true }
+        // Not while the form is up — it has its own fields, and stealing focus
+        // back to a search box that isn't even rendered loses the keystroke.
+        DispatchQueue.main.async { if model.filling == nil { searchFocused = true } }
     }
 }
 

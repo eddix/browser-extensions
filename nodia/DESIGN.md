@@ -38,8 +38,30 @@ climbing `parentID` until an ancestor id matches a space's root container id.
 ### Activation join
 The sidebar JSON and Arc's AppleScript both expose tab **URL**, so we activate
 by matching URL within the tab's Space (`tab of space "Name"`), then `select` +
-`focus`. Verified on real data: AppleScript sees ~207 tabs across spaces ≈ the
-~218 in the JSON, so `select` reaches sleeping tabs (it wakes them).
+`focus`.
+
+Sleeping tabs are *not* the limit here, despite the obvious guess. Reconciled
+per-Space against real data — 134 tabs in the JSON, 121 reported by AppleScript:
+
+| Space | AppleScript | JSON |
+|---|---|---|
+| seven ordinary Spaces | 121 | 121 |
+| Top Apps | — | 12 |
+| a second profile's untitled Space | — | 1 |
+
+Every ordinary Space agrees **exactly**, unrealized entries included, because
+AppleScript asks Arc — which answers from the same sidebar model the JSON is a
+dump of. (`chrome.tabs.query` asks Chromium instead, which only knows the tabs
+Arc has realized; that gap is why the extension approach was abandoned.)
+
+The real blind spot is structural. Arc's sidebar has three tiers — Favorites
+(the icon row shared across every Space) / Pinned / Unpinned — and AppleScript's
+object model only offers `application → windows → spaces → tabs`. Favorites
+hang off the sidebar root (`parentID: null`, referenced by
+`topAppsContainerIDs`), so `tabs of space` can never list them no matter how
+awake they are. `SidebarParser` labels them Space "Top Apps"; anything wanting
+to switch to a live tab should skip that label rather than pay a multi-second
+walk of every Space to fail.
 
 ## Scope
 
