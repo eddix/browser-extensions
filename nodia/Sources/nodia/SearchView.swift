@@ -19,9 +19,14 @@ struct SearchView: View {
         let mode = model.mode
 
         ZStack {
-            VisualEffectView(material: r.material).ignoresSafeArea()
-            if let tint = r.palette.tint {
-                tint.opacity(r.palette.tintOpacity).ignoresSafeArea()
+            // Only on systems without the glass container: there, this view is
+            // the background. With it, the shell already is one, and painting a
+            // second opaque wash inside would simply hide it.
+            if !SystemGlass.isAvailable {
+                VisualEffectView(material: r.material).ignoresSafeArea()
+                if let tint = r.palette.tint {
+                    tint.opacity(r.palette.tintOpacity).ignoresSafeArea()
+                }
             }
 
             VStack(spacing: 0) {
@@ -42,10 +47,17 @@ struct SearchView: View {
             }
         }
         .frame(width: 640, height: 460)
+        // Clipped here regardless of the glass, because the glass does *not*
+        // clip what you hand it — its header only promises the content will be
+        // placed inside the effect. Anything in here that paints edge to edge
+        // (an NSScrollView draws a control background of its own) then shows
+        // its square corners poking out past the rounded glass, four of them,
+        // which reads as a rectangular frame drawn around the panel.
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(r.palette.foreground.opacity(0.10))
+                .strokeBorder(SystemGlass.isAvailable
+                              ? Color.clear : r.palette.foreground.opacity(0.10))
         )
         .onAppear { focusSoon() }
         .onChange(of: model.focusRequest) { _, _ in focusSoon() }
@@ -81,6 +93,7 @@ struct SearchView: View {
                     .textFieldStyle(.plain)
                     .font(r.searchFont)
                     .foregroundStyle(r.palette.foreground)
+                    .tint(r.palette.accent)
                     .focused($searchFocused)
             }
             Button(action: onOpenSettings) {
@@ -133,9 +146,18 @@ struct SearchView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(.bottom, 12)
+
+            // The fields and the list under them are two different things —
+            // what you're filling in, and what you can fill it with. Running
+            // them together on nothing but whitespace made the section caption
+            // read as a third form row.
+            Divider()
+                .overlay(r.palette.foreground.opacity(0.10))
+                .padding(.horizontal, 16)
 
             candidateList(r)
+                .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Focus follows the model, and the model follows clicks — kept one-way
@@ -155,37 +177,64 @@ struct SearchView: View {
         _ parameter: String, index: Int, filling: QuickOpenForm, _ r: ResolvedTheme
     ) -> some View {
         let focused = parameter == filling.parameter
+        let value = filling.values[parameter] ?? ""
+        let shown = model.fieldText(parameter)
         return HStack(spacing: 10) {
             Text(parameter)
                 .font(r.subtitleFont)
                 .foregroundStyle(focused ? r.palette.accent : r.palette.secondary)
                 .lineLimit(1)
-                .frame(width: 96, alignment: .trailing)
-            TextField("", text: Binding(
-                get: { model.fieldText(parameter) },
-                // Only the focused field is an input; the others are just
-                // showing what they hold.
-                set: { if focused { model.setDraft($0) } }
-            ))
-            .textFieldStyle(.plain)
-            .font(r.titleFont)
-            .foregroundStyle(r.palette.foreground)
-            .focused($focusedParameter, equals: parameter)
-            // A value that reads nothing like what the URL gets deserves to
-            // say so on the same line, not only in the candidate list.
-            let value = filling.values[parameter] ?? ""
-            if !value.isEmpty && value != model.fieldText(parameter) {
-                Text(value)
-                    .font(r.captionFont)
-                    .foregroundStyle(r.palette.secondary)
-                    .lineLimit(1).truncationMode(.middle)
-                    .frame(maxWidth: 200, alignment: .trailing)
+                .frame(width: 92, alignment: .trailing)
+
+            HStack(spacing: 8) {
+                TextField("输入…", text: Binding(
+                    get: { shown },
+                    // Only the focused field is an input; the others are just
+                    // showing what they hold.
+                    set: { if focused { model.setDraft($0) } }
+                ))
+                .textFieldStyle(.plain)
+                .font(r.titleFont)
+                .foregroundStyle(r.palette.foreground)
+                // Selection and caret would otherwise come out in the system
+                // blue, which fights every palette here.
+                .tint(r.palette.accent)
+                .focused($focusedParameter, equals: parameter)
+
+                Spacer(minLength: 8)
+
+                // A value that reads nothing like what you see deserves to say
+                // so on the same line: "SG" gives no hint the URL says `sg`.
+                // Given its own chip rather than loose dim text, because loose
+                // dim text at the end of a lit row is where legibility goes to
+                // die — which is exactly what happened the first time.
+                if !value.isEmpty && value != shown {
+                    Text(value)
+                        .font(r.captionFont)
+                        .foregroundStyle(r.palette.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(r.palette.foreground.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            // Every field gets a filled shape, focused or not. Without one an
+            // empty field renders as nothing at all — a label with blank space
+            // beside it, which reads as a missing row rather than a box you
+            // can type in.
+            .background(focused ? r.palette.selection : r.palette.foreground.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? r.palette.accent.opacity(0.45) : .clear)
+            )
+            .frame(maxWidth: 400, alignment: .leading)
+
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(focused ? r.palette.selection : .clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { model.focusField(index) }
     }
@@ -232,6 +281,11 @@ struct SearchView: View {
                                     .padding(.vertical, 6)
                                     .background(i == model.fillingHighlight ? r.palette.selection : .clear)
                                     .clipShape(RoundedRectangle(cornerRadius: 7))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 7)
+                                            .strokeBorder(i == model.fillingHighlight
+                                                          ? r.palette.accent.opacity(0.55) : .clear)
+                                    )
                                     .contentShape(Rectangle())
                                     // Identity is the candidate, never its
                                     // position — the same rule every other list
@@ -285,8 +339,11 @@ struct SearchView: View {
                                 // old contents, so filtering down to a single
                                 // template still displayed whichever one
                                 // happened to be first before you typed.
+                                // No tag: in this list every row is a
+                                // template, so printing "快速打开" on each of
+                                // them says nothing and costs a column.
                                 TabRow(tab: row, icon: nil, selected: index == model.selectedIndex,
-                                       query: model.query, theme: r)
+                                       query: model.query, theme: r, showsTag: false)
                                     .id(row.id)
                                     .onTapGesture { onActivate(row) }
                             }
@@ -528,6 +585,7 @@ private struct TabRow: View {
     let selected: Bool
     let query: String
     let theme: ResolvedTheme
+    var showsTag: Bool = true
 
     var body: some View {
         // Highlight fields: title, the detail line (URL, or a saved link's
@@ -543,7 +601,7 @@ private struct TabRow: View {
                     Text(highlighted(tab.title, Set(m[0]), theme: theme))
                         .lineLimit(1).font(theme.titleFont).foregroundStyle(theme.palette.foreground)
                     Spacer(minLength: 8)
-                    if !tab.spaceTitle.isEmpty {
+                    if showsTag && !tab.spaceTitle.isEmpty {
                         // Capped and truncating: this tag shares a line with the
                         // title, so an unexpectedly long value must shrink
                         // rather than push the row past the panel's edge.
@@ -584,7 +642,8 @@ private struct ClusterRow: View {
                         .foregroundStyle(theme.palette.highlight)
                 }
                 Text("保留 \(cluster.keeper.spaceTitle) · 关 \(cluster.duplicates.map(\.spaceTitle).joined(separator: ", "))")
-                    .lineLimit(1).font(theme.subtitleFont).foregroundStyle(theme.palette.secondary)
+                    .lineLimit(1).font(theme.subtitleFont)
+                    .foregroundStyle(theme.palette.secondary)
             }
             Spacer(minLength: 8)
         }
@@ -633,12 +692,23 @@ private func favicon(_ icon: NSImage?, theme: ResolvedTheme) -> some View {
 }
 
 private extension View {
+    /// Selected-row treatment: a faint fill plus an accent stroke.
+    ///
+    /// The fill has to stay faint because it *lightens* the background, and
+    /// every point of alpha it gains is taken out of the contrast of the text
+    /// sitting on it — which is what made a selected row's URL unreadable in
+    /// half the palettes. The stroke carries the visibility instead: it says
+    /// "this row" just as clearly and changes nothing underneath the text.
     func rowChrome(selected: Bool, theme: ResolvedTheme) -> some View {
         self
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(selected ? theme.palette.selection : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(selected ? theme.palette.accent.opacity(0.55) : .clear)
+            )
     }
 }
 

@@ -15,7 +15,7 @@ from one prompt.
   last — and **⏎** opens it, switching to the tab if you already have one.
 - **⌘T** browse every quick-open template, **⌘D** duplicate clustering, **⌘G**
   by-domain browsing.
-- Themeable frosted-glass UI (7 palettes, 4 fonts, size) via the settings
+- Themeable frosted-glass UI (10 palettes, 4 fonts, size) via the settings
   window. Menu-bar icon: left-click to search, right-click for Settings / Quit.
 
 ## Why search and saving live in one app
