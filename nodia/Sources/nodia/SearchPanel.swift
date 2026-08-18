@@ -115,7 +115,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
                 case 32: self.model.query = ""; return nil                                           // ⌘U clear field
                 case 2:  self.model.toggleMode(); return nil                                         // ⌘D duplicates
                 case 5:  self.model.toggleDomainMode(); return nil                                   // Cmd+G by-domain
-                case 17: self.model.toggleJumpMode(); return nil                                     // ⌘T jump templates
+                case 17: self.model.toggleQuickOpenMode(); return nil                                     // ⌘T quick open
                 default: break
                 }
             }
@@ -146,19 +146,19 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     }
 
     private func handleEscape() {
-        // Backing out of a half-filled jump returns to search, not out of the
+        // Backing out of a half-filled template returns to search, not out of the
         // panel — you were mid-task.
         if model.filling != nil { model.cancelFilling() }
         else if !model.query.isEmpty { model.query = "" }
         else if model.mode == .duplicates { model.toggleMode() }
         else if model.mode == .byDomain { model.toggleDomainMode() }
-        else if model.mode == .jumps { model.toggleJumpMode() }
+        else if model.mode == .quickOpen { model.toggleQuickOpenMode() }
         else { hide() }
     }
 
     private func activateSelected() {
         guard let tab = model.selectedTab else { return }
-        // A jump template isn't a URL yet — collect its parameters first.
+        // A quick-open template isn't a URL yet — collect its parameters first.
         if model.beginFilling(tab) { return }
         activate(tab)
     }
@@ -166,8 +166,10 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     /// Takes the highlighted candidate for the current parameter (keyboard).
     private func commitFillingSelection() {
         let options = model.fillingOptions
+        // The value, never the label: "VA" is what you read, `us` is what the
+        // URL needs.
         let value = options.indices.contains(model.selectedIndex)
-            ? options[model.selectedIndex]
+            ? options[model.selectedIndex].value
             : model.query.trimmingCharacters(in: .whitespaces)
         commitFilling(value)
     }
@@ -179,7 +181,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         if let url = model.commitFillingValue(value) {
             hide()
             NSWorkspace.shared.open(url)
-            Log.write("jump: opened \(url.absoluteString)")
+            Log.write("quick-open: opened \(url.absoluteString)")
         }
     }
 

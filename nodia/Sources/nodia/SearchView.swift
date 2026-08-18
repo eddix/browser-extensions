@@ -32,7 +32,7 @@ struct SearchView: View {
                     switch mode {
                     case .duplicates: duplicateList(r)
                     case .byDomain:   domainList(r)
-                    case .jumps:      jumpList(r)
+                    case .quickOpen:      quickOpenList(r)
                     case .search:     searchList(r)
                     }
                 }
@@ -59,14 +59,14 @@ struct SearchView: View {
         let filling = model.filling
         let placeholder: String
         if let filling {
-            let hasChoices = !filling.template.options(for: filling.parameter).isEmpty
+            let hasChoices = !filling.template.choices(for: filling.parameter).isEmpty
             placeholder = hasChoices ? "选择或输入 \(filling.parameter)…" : "输入 \(filling.parameter)…"
         } else {
             switch mode {
             case .search:     placeholder = "搜索标签页…"
             case .duplicates: placeholder = "筛选重复…"
             case .byDomain:   placeholder = "按域名筛选…"
-            case .jumps:      placeholder = "筛选跳转…"
+            case .quickOpen:  placeholder = "筛选快速打开…"
             }
         }
         return HStack(spacing: 10) {
@@ -77,7 +77,7 @@ struct SearchView: View {
                 switch mode {
                 case .duplicates: modeChip("重复标签", icon: "rectangle.on.rectangle", r)
                 case .byDomain:   modeChip("按域名", icon: "square.grid.2x2", r)
-                case .jumps:      modeChip("跳转", icon: "arrow.turn.down.right", r)
+                case .quickOpen:  modeChip("快速打开", icon: "bolt", r)
                 case .search:     EmptyView()
                 }
             }
@@ -117,7 +117,7 @@ struct SearchView: View {
     /// are the same gesture.
     private func fillingList(_ r: ResolvedTheme) -> some View {
         let options = model.fillingOptions
-        let known = model.filling.map { !$0.template.options(for: $0.parameter).isEmpty } ?? false
+        let known = model.filling.map { !$0.template.choices(for: $0.parameter).isEmpty } ?? false
         return Group {
             if options.isEmpty {
                 VStack(spacing: 6) {
@@ -137,9 +137,17 @@ struct SearchView: View {
                                         .font(.system(size: known ? 6 : 10))
                                         .foregroundStyle(r.palette.secondary)
                                         .frame(width: 14)
-                                    Text(option)
+                                    Text(option.label)
                                         .font(r.titleFont)
                                         .foregroundStyle(r.palette.foreground)
+                                    // Show what it expands to when they differ —
+                                    // otherwise "VA" gives no hint that the URL
+                                    // will say `us`.
+                                    if option.label != option.value {
+                                        Text(option.value)
+                                            .font(r.subtitleFont)
+                                            .foregroundStyle(r.palette.secondary)
+                                    }
                                     Spacer()
                                     if !known {
                                         Text("自由输入")
@@ -154,8 +162,8 @@ struct SearchView: View {
                                 .contentShape(Rectangle())
                                 // Same identity rule as every other list here:
                                 // the option itself, not its position.
-                                .id(option)
-                                .onTapGesture { onCommitFilling(option) }
+                                .id(option.value)
+                                .onTapGesture { onCommitFilling(option.value) }
                             }
                         }
                         .padding(.horizontal, 8)
@@ -164,7 +172,7 @@ struct SearchView: View {
                     .onChange(of: model.selectedIndex) { _, i in
                         guard options.indices.contains(i) else { return }
                         withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(options[i], anchor: .center)
+                            proxy.scrollTo(options[i].value, anchor: .center)
                         }
                     }
                 }
@@ -173,19 +181,19 @@ struct SearchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Every jump template. Plain search surfaces these too, but only once
+    /// Every quick-open template. Plain search surfaces these too, but only once
     /// you know one exists — this is the browsable answer.
-    private func jumpList(_ r: ResolvedTheme) -> some View {
-        let rows = model.jumpResults
+    private func quickOpenList(_ r: ResolvedTheme) -> some View {
+        let rows = model.quickOpenResults
         return Group {
             if rows.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "arrow.turn.down.right")
+                    Image(systemName: "bolt")
                         .font(.system(size: 28)).foregroundStyle(r.palette.secondary)
-                    Text(model.query.isEmpty ? "还没有跳转模板" : "无匹配")
+                    Text(model.query.isEmpty ? "还没有快速打开模板" : "无匹配")
                         .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
                     if model.query.isEmpty {
-                        Text("在收藏库的 Bookmark/00-Jumps.md 里添加")
+                        Text("在收藏库的 \(QuickOpenStore.fileName) 里添加")
                             .font(r.captionFont).foregroundStyle(r.palette.secondary)
                     }
                 }
@@ -397,8 +405,8 @@ struct SearchView: View {
                 Spacer()
                 KeyHint(label: "打开", keys: ["⏎"], theme: r)
                 KeyHint(label: "返回", keys: ["⌘", "G"], theme: r)
-            case .jumps:
-                Text("\(model.jumpResults.count) 个跳转模板")
+            case .quickOpen:
+                Text("\(model.quickOpenResults.count) 个快速打开模板")
                 Spacer()
                 KeyHint(label: "填参数", keys: ["⏎"], theme: r)
                 KeyHint(label: "返回", keys: ["⌘", "T"], theme: r)
@@ -406,7 +414,7 @@ struct SearchView: View {
                 Text("\(model.results.count) 个标签")
                 Spacer()
                 KeyHint(label: "打开", keys: ["⏎"], theme: r)
-                KeyHint(label: "跳转", keys: ["⌘", "T"], theme: r)
+                KeyHint(label: "快速打开", keys: ["⌘", "T"], theme: r)
                 KeyHint(label: "域名", keys: ["⌘", "G"], theme: r)
                 KeyHint(label: "去重", keys: ["⌘", "D"], theme: r)
             }

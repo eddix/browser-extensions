@@ -26,7 +26,7 @@ final class VaultService {
         do {
             let store = try VaultStore(vaultRoot: settings.vaultURL)
             self.store = store
-            Self.seedJumpsFileIfMissing(vaultRoot: settings.vaultURL)
+            Self.seedQuickOpenFileIfMissing(vaultRoot: settings.vaultURL)
 
             let api = VaultAPI(store: store) {
                 [weak self] title, url, content, onProgress, done in
@@ -56,21 +56,21 @@ final class VaultService {
         start()
     }
 
-    /// Writes the jump-template file once, with worked examples.
+    /// Writes the quick-open template file once, with worked examples.
     ///
     /// A config format nobody knows exists is a feature nobody uses — the file
     /// documents itself by being there and already working. Never overwritten.
-    private static func seedJumpsFileIfMissing(vaultRoot: URL) {
-        let file = vaultRoot.appendingPathComponent(JumpStore.fileName)
+    private static func seedQuickOpenFileIfMissing(vaultRoot: URL) {
+        let file = vaultRoot.appendingPathComponent(QuickOpenStore.fileName)
         guard !FileManager.default.fileExists(atPath: file.path) else { return }
         do {
             try FileManager.default.createDirectory(
                 at: file.deletingLastPathComponent(), withIntermediateDirectories: true
             )
-            try JumpStore.starterFile().write(to: file, atomically: true, encoding: .utf8)
-            Log.write("jumps: seeded \(JumpStore.fileName)")
+            try QuickOpenStore.starterFile().write(to: file, atomically: true, encoding: .utf8)
+            Log.write("quick-open: seeded \(QuickOpenStore.fileName)")
         } catch {
-            Log.write("jumps: could not seed template file — \(error.localizedDescription)")
+            Log.write("quick-open: could not seed template file — \(error.localizedDescription)")
         }
     }
 

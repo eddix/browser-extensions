@@ -6,7 +6,7 @@ import NodiaCore
 /// derived from `query` + the loaded tabs, so the search field, list, and count
 /// can never drift out of sync (no `@Published` mutated inside another's didSet).
 final class TabListModel: ObservableObject {
-    enum Mode { case search, duplicates, byDomain, jumps }
+    enum Mode { case search, duplicates, byDomain, quickOpen }
 
     @Published var query: String = "" {
         didSet { if selectedIndex != 0 { selectedIndex = 0 } }
@@ -17,21 +17,21 @@ final class TabListModel: ObservableObject {
 
     private var arcTabs: [TabEntry] = []
     private var vaultTabs: [TabEntry] = []
-    private var jumpRows: [TabEntry] = []
-    private var tabs: [TabEntry] { arcTabs + jumpRows + vaultTabs }
+    private var quickOpenRows: [TabEntry] = []
+    private var tabs: [TabEntry] { arcTabs + quickOpenRows + vaultTabs }
     private weak var vaultStore: VaultStore?
 
     // MARK: - Jump templates
 
-    private var templates: [JumpTemplate] = []
+    private var templates: [QuickOpenTemplate] = []
 
-    /// Set while filling in a jump's parameters. The search field becomes the
+    /// Set while filling in a template's parameters. The search field becomes the
     /// input for one parameter at a time, so the same keyboard drives both
-    /// finding a jump and completing it.
+    /// finding a template and completing it.
     @Published private(set) var filling: Filling?
 
     struct Filling {
-        let template: JumpTemplate
+        let template: QuickOpenTemplate
         var values: [String: String] = [:]
         var index: Int = 0
 
@@ -47,37 +47,37 @@ final class TabListModel: ObservableObject {
         reload()
     }
 
-    /// Lets search reach saved links and jump templates, not just open tabs.
+    /// Lets search reach saved links and quick-open templates, not just open tabs.
     func attachVault(_ store: VaultStore?) {
         vaultStore = store
         reloadVault()
-        reloadJumps()
+        reloadQuickOpen()
     }
 
-    /// Jump templates are rows like any other, so one prompt covers open tabs,
-    /// saved links, and parameterized platform jumps.
-    private func reloadJumps() {
-        guard let vaultStore else { templates = []; jumpRows = []; return }
-        templates = JumpStore.load(vaultRoot: vaultStore.vaultRoot)
-        jumpRows = templates.map { t in
+    /// Quick-open templates are rows like any other, so one prompt covers open
+    /// tabs, saved links, and parameterized platform URLs.
+    private func reloadQuickOpen() {
+        guard let vaultStore else { templates = []; quickOpenRows = []; return }
+        templates = QuickOpenStore.load(vaultRoot: vaultStore.vaultRoot).templates
+        quickOpenRows = templates.map { t in
             let params = t.parameters.map { "{\($0)}" }.joined(separator: " ")
             return TabEntry(
-                id: "jump:\(t.name)",
+                id: "qo:\(t.name)",
                 title: t.name,
                 url: t.urlTemplate,
-                spaceTitle: "跳转",
+                spaceTitle: "快速打开",
                 lastActiveAt: 0,
-                origin: .jumpTemplate,
+                origin: .quickOpen,
                 subtitle: t.note ?? (params.isEmpty ? t.urlTemplate : "参数：\(params)"),
                 note: (t.keywords + [t.urlTemplate]).joined(separator: " ")
             )
         }
-        Log.write("reload: \(templates.count) jump templates")
+        Log.write("reload: \(templates.count) quick-open templates")
     }
 
-    func template(for entry: TabEntry) -> JumpTemplate? {
-        guard entry.origin == .jumpTemplate else { return nil }
-        return templates.first { "jump:\($0.name)" == entry.id }
+    func template(for entry: TabEntry) -> QuickOpenTemplate? {
+        guard entry.origin == .quickOpen else { return nil }
+        return templates.first { "qo:\($0.name)" == entry.id }
     }
 
     /// Enters parameter-filling mode. Returns false if this isn't a template.
@@ -91,17 +91,23 @@ final class TabListModel: ObservableObject {
     }
 
     /// Candidates for the parameter being filled, narrowed by what's typed.
-    /// A parameter with no candidate list is free input — the typed text is
-    /// offered back as the single option.
-    var fillingOptions: [String] {
+    ///
+    /// Free input is modelled as a single candidate equal to what you typed, so
+    /// picking from a list and typing a value are the same gesture downstream.
+    /// Matching looks at the label *and* the value: you might remember either
+    /// "VA" or the `us` it expands to.
+    var fillingOptions: [Choice] {
         guard let filling else { return [] }
-        let all = filling.template.options(for: filling.parameter)
+        let all = filling.template.choices(for: filling.parameter)
         let q = query.trimmingCharacters(in: .whitespaces)
-        if all.isEmpty { return q.isEmpty ? [] : [q] }
+        if all.isEmpty { return q.isEmpty ? [] : [Choice(label: q, value: q)] }
         guard !q.isEmpty else { return all }
-        let matched = all.filter { $0.lowercased().contains(q.lowercased()) }
+        let lowered = q.lowercased()
+        let matched = all.filter {
+            $0.label.lowercased().contains(lowered) || $0.value.lowercased().contains(lowered)
+        }
         // Typed something that isn't in the list — still allow it.
-        return matched.isEmpty ? [q] : matched
+        return matched.isEmpty ? [Choice(label: q, value: q)] : matched
     }
 
     /// Commits one value. Returns the URL once every parameter is filled.
@@ -137,7 +143,7 @@ final class TabListModel: ObservableObject {
             Log.write("reload: parse FAILED: \(error)")
         }
         reloadVault()
-        reloadJumps()
+        reloadQuickOpen()
         fillIconCache()
     }
 
@@ -192,7 +198,7 @@ final class TabListModel: ObservableObject {
         case .search:     count = results.count
         case .duplicates: count = clusters.count
         case .byDomain:   count = flatDomainTabs.count
-        case .jumps:      count = jumpResults.count
+        case .quickOpen:      count = quickOpenResults.count
         }
         guard count > 0 else { return }
         selectedIndex = max(0, min(count - 1, selectedIndex + delta))
@@ -210,21 +216,21 @@ final class TabListModel: ObservableObject {
         selectedIndex = 0
     }
 
-    /// ⌘T: browse the jump templates. They already surface in plain search,
-    /// but only if you remember one exists — this is the answer to "what can
-    /// I jump to?", which is not a question search can answer.
-    func toggleJumpMode() {
-        mode = (mode == .jumps) ? .search : .jumps
+    /// ⌘T: browse the quick-open templates. They already surface in plain
+    /// search, but only if you remember one exists — this is the answer to
+    /// "what can I open?", which is not a question search can answer.
+    func toggleQuickOpenMode() {
+        mode = (mode == .quickOpen) ? .search : .quickOpen
         query = ""
         selectedIndex = 0
     }
 
     /// Templates in ⌘T mode, filtered by a plain substring so browsing stays
     /// predictable — this list is short enough not to need ranking.
-    var jumpResults: [TabEntry] {
+    var quickOpenResults: [TabEntry] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return jumpRows }
-        return jumpRows.filter {
+        guard !q.isEmpty else { return quickOpenRows }
+        return quickOpenRows.filter {
             $0.title.lowercased().contains(q) || $0.note.lowercased().contains(q)
                 || $0.url.lowercased().contains(q)
         }
@@ -235,7 +241,7 @@ final class TabListModel: ObservableObject {
         switch mode {
         case .search:     list = results
         case .byDomain:   list = flatDomainTabs
-        case .jumps:      list = jumpResults
+        case .quickOpen:      list = quickOpenResults
         case .duplicates: return nil   // duplicates mode selects clusters, not tabs
         }
         return list.indices.contains(selectedIndex) ? list[selectedIndex] : nil

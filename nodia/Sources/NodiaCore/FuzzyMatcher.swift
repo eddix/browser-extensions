@@ -33,10 +33,15 @@ public enum FuzzyMatcher {
         return scored
             .sorted { a, b in
                 if a.1 != b.1 { return a.1 > b.1 }
-                // On an equal score, prefer the deliberate entry: you defined a
-                // jump template on purpose, and there are only a handful of
-                // them. A live tab still beats a saved link, since switching to
-                // an open window beats reopening a URL.
+                // On an equal score: open tab > template > saved link.
+                //
+                // The whole point of this panel is to reuse a window you
+                // already have rather than open a fourth copy of it, so a live
+                // tab wins any tie. Templates come next — you defined one on
+                // purpose, and there are only a handful — and they have ⌘T as
+                // their own list besides, which the open tabs never will. This
+                // ⌘⇧K ordering is the only place open tabs can be preferred,
+                // and preferring them is what makes closing one feel safe.
                 if a.0.origin != b.0.origin {
                     return originPriority(a.0.origin) < originPriority(b.0.origin)
                 }
@@ -81,7 +86,7 @@ public enum FuzzyMatcher {
 
     /// Whether this row's `spaceTitle` is worth matching.
     ///
-    /// For a saved link or a jump it holds the kind (档案 / 待办 / 跳转) — a
+    /// For a saved link or a template it holds the kind (档案 / 待办 / 快速打开) — a
     /// useful filter. For an Arc tab it holds the Space name, which is pure
     /// noise: measured on a real sidebar, searching "ledger" matched 23 tabs
     /// solely because they sat in a Space of that name (against 21 genuine
@@ -94,9 +99,9 @@ public enum FuzzyMatcher {
 
     private static func originPriority(_ o: TabEntry.Origin) -> Int {
         switch o {
-        case .jumpTemplate: return 0
-        case .arcTab:       return 1
-        case .vault:        return 2
+        case .arcTab:    return 0
+        case .quickOpen: return 1
+        case .vault:     return 2
         }
     }
 

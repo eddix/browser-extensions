@@ -18,8 +18,8 @@ public struct TabEntry: Identifiable, Hashable, Sendable {
         case arcTab
         /// A saved link: no window exists, so open the URL.
         case vault
-        /// A parameterized jump: ask for the values, *then* open.
-        case jumpTemplate
+        /// A parameterized URL: ask for the values, *then* open.
+        case quickOpen
     }
 
     public let origin: Origin

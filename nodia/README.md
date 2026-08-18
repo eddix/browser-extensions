@@ -10,10 +10,10 @@ from one prompt.
   link, **esc** to close.
 - Matched characters are highlighted; rows show favicon + title + Space (for a
   live tab) or kind + summary (for a saved link).
-- **Jump templates** — one entry for a whole family of platform URLs. Search
-  its name, then fill the parameters one at a time (candidates are a list;
+- **快速打开** — one entry for a whole family of platform URLs. Search its
+  name, then fill the parameters one at a time (candidates are a list;
   anything without one takes free input), and it opens.
-- **⌘T** browse every jump template, **⌘D** duplicate clustering, **⌘G**
+- **⌘T** browse every quick-open template, **⌘D** duplicate clustering, **⌘G**
   by-domain browsing.
 - Themeable frosted-glass UI (7 palettes, 4 fonts, size) via the settings
   window. Menu-bar icon: left-click to search, right-click for Settings / Quit.
@@ -159,9 +159,9 @@ The local port is guarded too: every request needs `Authorization: Bearer
 on *any* page you visit could read your whole bookmark index off `localhost` —
 which the previous backend, with `allow_origin(Any)`, permitted.
 
-## Jump templates
+## 快速打开
 
-Internal platforms encode the same three things over and over — the region in
+Internal platforms encode the same three things over and over — the site in
 the hostname, the feature in the path, the target in the query:
 
 ```
@@ -172,27 +172,71 @@ https://{site}/confighub/namespace/{namespace}?env={env}
 
 Without a way to express that, each combination has to be saved separately —
 which is how the same monitoring console ends up bookmarked once per region
-(four copies of one Metrics board, in the vault this was built against). A
-template collapses the family into one entry:
+(four copies of one board, in the vault this was built against). A template
+collapses the family into one entry, in `Bookmark/00-QuickOpen.json`:
 
-```markdown
-- Metrics 服务大盘
-  - url: https://console-{region}.example.com/metrics/overview/server_overview?service={service}&from={window}
-  - region: i18n, us, eu
-  - window: now-1h, now-6h, now-24h
-  - keywords: metrics, 监控
+```json
+{
+  "shared": {
+    "region": ["SG=sg", "VA=us", "EU=eu-central-1"]
+  },
+  "templates": [
+    {
+      "name": "对账任务详情",
+      "keywords": ["ledger", "对账"],
+      "url": "https://ledger.example.net/#/{region}/reconciliation-detail/{task_id}",
+      "params": {
+        "region": { "use": "region" },
+        "task_id": { "input": true }
+      }
+    }
+  ]
+}
 ```
 
+Any `{name}` in the URL is a parameter, and the URL — not the `params` object —
+decides the order you're asked for them: JSON objects have no order once
+parsed, and reading left to right through the address is how you'd fill a form
+anyway. Placeholders sit anywhere a string can, including partway through a
+hostname.
+
+Three things the format has to get right, each learned from a template that
+didn't work without it:
+
+- **A candidate's label is not its value.** `"VA=us"` reads *VA* and expands to
+  `us`; the same picker's EU entry expands to `eu-central-1`. Only the first `=`
+  splits, since values are URL fragments and routinely contain more.
+- **Picking and typing are different gestures.** `choices` renders a list;
+  `input` renders a text box. A parameter nobody described defaults to free
+  input, which keeps a minimal template down to a name and a URL.
+- **The same list appears in template after template.** `shared` names it once
+  and `{ "use": "region" }` refers to it — five regions across six templates
+  was already six chances to get one wrong.
+
 **⌘T** lists every template — plain search finds them too, but only if you
-remember one exists, and "what can I jump to?" isn't a question search can
-answer.
+remember one exists, and "what can I open?" isn't a question search can answer.
+In plain ⌘⇧K a template outranks a saved link on a tie but loses to an open
+tab: reusing the window you already have is the point, and templates have ⌘T of
+their own besides.
 
-Any `{name}` is a parameter. A field of the same name lists its candidates;
-a parameter with no such field takes free input (a service name, say). Placeholders can
-sit anywhere a string can — including partway through a hostname.
+### Why JSON and not Markdown
 
-Templates live in the vault as Markdown for the same reason everything else
-does: the file outlives this app and is editable without it.
+Everything else in the vault is Markdown, and this file was too, as indented
+bullets. It's the one file that shouldn't be. The rest of the vault is *content
+you'll read*; this is *configuration you write*, and a config syntax
+hand-rolled on Markdown bullets had already bought one arbitrary limitation
+(candidates were comma-separated, so no value could contain a comma) before
+label-vs-value or shared lists were even attempted. What it was becoming was a
+worse YAML.
+
+JSON also round-trips cleanly, which the planned "make a template out of this
+tab" needs — rewriting a YAML file without destroying its comments and anchors
+is a project of its own. The cost, stated plainly: JSON has no comments.
+Per-template `note` covers explaining an entry; file-level commentary has
+nowhere to go.
+
+The old `Bookmark/00-Jumps.md` is still read when no JSON file exists, so an
+existing vault keeps working untouched.
 
 ## How it works
 
@@ -202,7 +246,7 @@ does: the file outlives this app and is editable without it.
 | Favicons | Arc's Chromium `…/User Data/Default/Favicons` SQLite DB (read-only) |
 | Activation | `osascript` → Arc AppleScript `select` + `focus`; fallback `open <url>` |
 | Saved links | Obsidian vault Markdown under `Bookmark/` |
-| Jump templates | `Bookmark/00-Jumps.md` (seeded with examples on first run) |
+| 快速打开模板 | `Bookmark/00-QuickOpen.json` (seeded with examples on first run) |
 | Save endpoint | `127.0.0.1:8787`, token-authenticated |
 | Summaries | your own LLM endpoints, routed by host (intranet vs public) |
 
@@ -227,7 +271,7 @@ See [DESIGN.md](./DESIGN.md) for the tab-parsing details.
 ```sh
 swift run nodia              # run from source
 swift run nodia-probe        # headless check: tabs, favicons, vault index
-swift test                   # 41 tests, incl. HTTP boundary + summary routing
+swift test                   # 147 tests, incl. HTTP boundary + summary routing
 ```
 
 ## Install as an app

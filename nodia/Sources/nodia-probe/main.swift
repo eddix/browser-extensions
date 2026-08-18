@@ -66,13 +66,17 @@ do {
     }
     // Jump templates ranked alongside tabs — reproduces what ⌘⇧K shows, so a
     // "why didn't my template come up" question is answerable without the GUI.
-    let jumps = JumpStore.load(vaultRoot: URL(fileURLWithPath: vaultPath))
-    print("\n🔀 jump templates: \(jumps.count)")
-    let jumpRows = jumps.map { t in
+    let loaded = QuickOpenStore.load(vaultRoot: URL(fileURLWithPath: vaultPath))
+    let templates = loaded.templates
+    print("\n🔀 quick-open templates: \(templates.count)")
+    // Config problems are the reason to run this at all — a bad `use:` reference
+    // otherwise shows up as a parameter that silently offers no candidates.
+    for problem in loaded.problems { print("  ⚠︎ \(problem)") }
+    let quickOpenRows = templates.map { t in
         TabEntry(
-            id: "jump:\(t.name)", title: t.name, url: t.urlTemplate,
-            spaceTitle: "跳转 · " + t.parameters.joined(separator: " · "),
-            lastActiveAt: 0, origin: .jumpTemplate,
+            id: "qo:\(t.name)", title: t.name, url: t.urlTemplate,
+            spaceTitle: "快速打开 · " + t.parameters.joined(separator: " · "),
+            lastActiveAt: 0, origin: .quickOpen,
             note: (t.keywords + [t.note ?? ""]).joined(separator: " ")
         )
     }
@@ -80,9 +84,9 @@ do {
     // Expand each template with its first candidate, so a broken URL is
     // visible here rather than discovered by a browser 404.
     print("\n🧪 模板展开自检:")
-    for t in jumps {
+    for t in templates {
         let values = Dictionary(uniqueKeysWithValues: t.parameters.map {
-            ($0, t.options(for: $0).first ?? "<\($0)>")
+            ($0, t.choices(for: $0).first?.value ?? "<\($0)>")
         })
         if let url = t.expand(values) {
             print("  ✅ \(t.name)")
@@ -105,12 +109,12 @@ do {
             }
         } ?? []
 
-    let all = tabs + jumpRows + vaultRows
+    let all = tabs + quickOpenRows + vaultRows
     print("\n🔎 搜索 \"\(probeQuery)\" 的排序（共 \(all.count) 条候选）:")
     for (i, row) in FuzzyMatcher.rank(all, query: probeQuery).prefix(12).enumerated() {
         let mark: String
         switch row.origin {
-        case .jumpTemplate: mark = "🔀 模板"
+        case .quickOpen: mark = "🔀 模板"
         case .vault:        mark = "📚 档案"
         case .arcTab:       mark = "·  标签"
         }

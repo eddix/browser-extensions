@@ -1,7 +1,7 @@
 import XCTest
 @testable import NodiaCore
 
-/// Ranking decides whether a feature is discoverable at all. A jump template
+/// Ranking decides whether a feature is discoverable at all. A quick-open template
 /// that exists but never surfaces is, from the keyboard, the same as one that
 /// doesn't exist — which is exactly what happened before these rules.
 final class RankingTests: XCTestCase {
@@ -11,8 +11,8 @@ final class RankingTests: XCTestCase {
     }
 
     private func template(_ name: String) -> TabEntry {
-        TabEntry(id: "jump:\(name)", title: name, url: "https://x-{r}.com/a",
-                 spaceTitle: "跳转", lastActiveAt: 0, origin: .jumpTemplate)
+        TabEntry(id: "qo:\(name)", title: name, url: "https://x-{r}.com/a",
+                 spaceTitle: "快速打开", lastActiveAt: 0, origin: .quickOpen)
     }
 
     /// The bug this file exists for: a template tied with nine open tabs on
@@ -25,7 +25,7 @@ final class RankingTests: XCTestCase {
             template("Metrics 服务大盘"),
         ]
         let top = try XCTUnwrap(FuzzyMatcher.rank(rows, query: "metrics").first)
-        XCTAssertEqual(top.origin, .jumpTemplate)
+        XCTAssertEqual(top.origin, .quickOpen)
         XCTAssertEqual(top.title, "Metrics 服务大盘")
     }
 
@@ -43,6 +43,19 @@ final class RankingTests: XCTestCase {
         let rows = [template("Metrics 服务大盘"), tab("Metrics")]
         let top = try XCTUnwrap(FuzzyMatcher.rank(rows, query: "metrics").first)
         XCTAssertEqual(top.origin, .arcTab, "完全匹配的标签页应胜过模板")
+    }
+
+    /// The ⌘⇧K ordering rule, stated as a test: on a genuine tie the open tab
+    /// wins, over both a template and a saved link. Reusing a window you
+    /// already have is the behaviour the whole panel is meant to encourage —
+    /// and it costs the template nothing, since ⌘T lists every one of them.
+    func testOpenTabWinsTheTieOverTemplateAndVault() throws {
+        let saved = TabEntry(id: "v", title: "Ledger", url: "https://x.com/a",
+                             spaceTitle: "档案", lastActiveAt: 0, origin: .vault)
+        let rows = [saved, template("Ledger"), tab("Ledger", active: 0)]
+        let ranked = FuzzyMatcher.rank(rows, query: "ledger")
+        XCTAssertEqual(ranked.map(\.origin), [.arcTab, .quickOpen, .vault],
+                       "同分时：已打开标签 > 模板 > 档案收藏")
     }
 
     /// A live tab beats a saved copy of the same page: switching to an open
@@ -88,12 +101,12 @@ final class RankingTests: XCTestCase {
         XCTAssertEqual(FuzzyMatcher.rank([todo], query: "待办").count, 1)
     }
 
-    func testJumpTemplateStillMatchesItsTag() throws {
-        let jump = TabEntry(
+    func testQuickOpenTemplateStillMatchesItsTag() throws {
+        let template = TabEntry(
             id: "j", title: "Metrics 服务大盘", url: "https://x-{r}.com/a",
-            spaceTitle: "跳转", lastActiveAt: 0, origin: .jumpTemplate
+            spaceTitle: "快速打开", lastActiveAt: 0, origin: .quickOpen
         )
-        XCTAssertEqual(FuzzyMatcher.rank([jump], query: "跳转").count, 1)
+        XCTAssertEqual(FuzzyMatcher.rank([template], query: "快速打开").count, 1)
     }
 
     /// Excluding the Space name must not cost a real hit: a tab whose title or
