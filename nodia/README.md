@@ -104,6 +104,38 @@ Expect the summary itself to take a few seconds — on a thinking-capable model
 (most current ones) it can be 5–15s, and some, like `glm-5.3`, don't allow
 thinking to be switched off. The panel shows progress while it works.
 
+### Signing the build
+
+`build-app.sh` ad-hoc signs by default, which works but has one cost: an ad-hoc
+signature has no identity, so the system falls back to hashing the binary
+itself. Every rebuild produces a different hash, the system sees a brand-new
+app, and the privacy permissions and Keychain access granted to the last build
+are void — you re-approve the Documents folder on every install.
+
+A signing certificate fixes that, and a **self-signed one is enough** — macOS
+records permissions against the app's designated requirement, which becomes the
+bundle ID plus the certificate rather than the binary's hash:
+
+```
+ad-hoc:      designated => cdhash H"394b0c58…"                    ← changes every build
+certificate: designated => identifier "com.eddix.nodia" and certificate root = H"afb52521…"
+```
+
+Create one in Keychain Access (Certificate Assistant → Create a Certificate →
+type **Code Signing**, self-signed), then:
+
+```sh
+export NODIA_SIGN_IDENTITY="Your Signing Identity"   # put this in ~/.zshrc
+./build-app.sh
+```
+
+One certificate can sign every app you build — permissions are keyed on bundle
+ID *and* certificate, so separate apps stay separate. It is for local builds
+only: distributing a binary to other machines needs a Developer ID certificate
+and notarization, which self-signing can't provide. **Never commit the
+certificate**: whoever holds the private key can sign something that inherits
+the permissions you granted.
+
 ### Data-safety lines this must not cross
 
 Extracting page text to summarize it is, mechanically, exactly what a malicious
