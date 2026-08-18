@@ -1,9 +1,13 @@
 import SwiftUI
 import NodiaCore
 
-/// The centered panel UI. Two modes: fuzzy tab search, and a duplicates view
-/// (clusters of identical tabs with a one-keystroke dedupe). Colors/fonts come
-/// from the active theme; keyboard handling lives in the panel controller.
+/// The centered panel UI. Four lists — fuzzy search, quick-open templates,
+/// duplicate clusters, and tabs by domain — plus the parameter form, which is
+/// not a fifth mode but a state laid over whichever one you came from: it takes
+/// the whole body and the keyboard while it's up, and esc puts you back.
+///
+/// Colors/fonts come from the active theme; keyboard handling lives in the
+/// panel controller.
 struct SearchView: View {
     @ObservedObject var model: TabListModel
     @ObservedObject var themeStore: ThemeStore

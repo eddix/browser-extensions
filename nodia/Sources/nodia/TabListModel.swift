@@ -301,8 +301,8 @@ final class TabListModel: ObservableObject {
     }
     var allDuplicates: [TabEntry] { clusters.flatMap(\.duplicates) }
 
-    // Tabs grouped by domain (arc-tab-sorter parity), filtered by the current
-    // query as a plain substring over title/url/domain. `flatDomainTabs` is the
+    // Tabs grouped by domain, filtered by the current query as a plain
+    // substring over title/url/domain. `flatDomainTabs` is the
     // group order flattened — the view renders `domainGroups`, the keyboard
     // walks `flatDomainTabs`, and both stay in lockstep via `selectedIndex`.
     var domainGroups: [DomainGroup] {

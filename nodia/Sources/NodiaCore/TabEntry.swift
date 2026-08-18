@@ -24,10 +24,6 @@ public struct TabEntry: Identifiable, Hashable, Sendable {
 
     public let origin: Origin
 
-    /// Kept as a convenience because "does this have a live window" is the
-    /// question most callers actually ask.
-    public var isVault: Bool { origin != .arcTab }
-
     /// Second line of the row. Nil means "show the URL", which is what a tab
     /// wants; a saved link would rather show its summary, since that's the
     /// part worth reading.

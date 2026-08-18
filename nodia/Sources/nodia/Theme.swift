@@ -96,7 +96,6 @@ struct ResolvedTheme {
     let titleFont: Font
     let subtitleFont: Font
     let captionFont: Font
-
 }
 
 enum ThemeResolver {

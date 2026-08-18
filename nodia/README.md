@@ -223,7 +223,7 @@ uncommon one is typing into the single field that differs.
 | | |
 |---|---|
 | **⏎** | open, with whatever the fields say right now |
-| **⇥** | next field, wrapping; keeps whatever the highlight is on |
+| **⇥** | next field, wrapping; keeps the candidate you arrowed onto, or what you typed if you never left the field |
 | **↑↓** | walk the candidates under the focused field |
 | **esc** | back to the list you came from |
 

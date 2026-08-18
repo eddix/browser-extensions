@@ -8,9 +8,11 @@ import Foundation
 /// counters are what make the answer honest rather than a spinner that means
 /// nothing.
 ///
-/// Entries are dropped as soon as their preview finishes, and anything left
-/// behind by a caller that walked away expires, so the table can't grow without
-/// bound in a process that stays up for weeks.
+/// Finishing doesn't remove anything — the entry stays, marked done, so the
+/// poll already in flight gets an answer rather than "unknown job". Age is what
+/// removes it, swept on the next `start`, which means a finished job and one
+/// abandoned halfway leave by the same door and neither can pile up in a
+/// process that stays running for weeks.
 public final class PreviewProgressStore: @unchecked Sendable {
 
     public struct Entry: Sendable, Equatable {
@@ -48,8 +50,8 @@ public final class PreviewProgressStore: @unchecked Sendable {
         jobs[job] = entry
     }
 
-    /// Marks the job finished but keeps it briefly, so a poll already in flight
-    /// gets a real answer instead of "unknown job".
+    /// Marks the job finished and keeps it until the TTL sweep, so a poll
+    /// already in flight gets a real answer instead of "unknown job".
     public func finish(_ job: String) {
         lock.lock(); defer { lock.unlock() }
         guard var entry = jobs[job] else { return }
