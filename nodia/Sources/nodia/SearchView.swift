@@ -152,7 +152,9 @@ struct SearchView: View {
                                 .background(index == model.selectedIndex ? r.palette.selection : .clear)
                                 .clipShape(RoundedRectangle(cornerRadius: 7))
                                 .contentShape(Rectangle())
-                                .id(index)
+                                // Same identity rule as every other list here:
+                                // the option itself, not its position.
+                                .id(option)
                                 .onTapGesture { onCommitFilling(option) }
                             }
                         }
@@ -160,7 +162,10 @@ struct SearchView: View {
                         .padding(.vertical, 6)
                     }
                     .onChange(of: model.selectedIndex) { _, i in
-                        withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(i, anchor: .center) }
+                        guard options.indices.contains(i) else { return }
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(options[i], anchor: .center)
+                        }
                     }
                 }
             }
@@ -190,16 +195,26 @@ struct SearchView: View {
                     ScrollView {
                         LazyVStack(spacing: 2) {
                             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                                // Identity has to be the row's own id — the same
+                                // one ForEach uses. Overriding it with the
+                                // position made SwiftUI treat "row 0 of six" and
+                                // "row 0 of one" as the same view and keep the
+                                // old contents, so filtering down to a single
+                                // template still displayed whichever one
+                                // happened to be first before you typed.
                                 TabRow(tab: row, icon: nil, selected: index == model.selectedIndex,
                                        query: model.query, theme: r)
-                                    .id(index)
+                                    .id(row.id)
                                     .onTapGesture { onActivate(row) }
                             }
                         }
                         .padding(.horizontal, 8).padding(.vertical, 6)
                     }
                     .onChange(of: model.selectedIndex) { _, i in
-                        withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(i, anchor: .center) }
+                        guard rows.indices.contains(i) else { return }
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(rows[i].id, anchor: .center)
+                        }
                     }
                 }
             }
@@ -392,6 +407,7 @@ struct SearchView: View {
                 Spacer()
                 KeyHint(label: "打开", keys: ["⏎"], theme: r)
                 KeyHint(label: "跳转", keys: ["⌘", "T"], theme: r)
+                KeyHint(label: "域名", keys: ["⌘", "G"], theme: r)
                 KeyHint(label: "去重", keys: ["⌘", "D"], theme: r)
             }
         }
