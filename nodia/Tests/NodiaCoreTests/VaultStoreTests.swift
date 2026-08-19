@@ -138,6 +138,40 @@ final class VaultStoreTests: XCTestCase {
         XCTAssertEqual(entry.title, "待办一号")
     }
 
+    /// Writing must not leave the index looking stale to the next reader.
+    ///
+    /// The staleness check compares a fingerprint of the directory against the
+    /// one taken when the index was built, so a save moves the timestamps out
+    /// from under it and the next read pays for a full re-parse — of a vault it
+    /// is already holding correctly. That read is usually the hotkey, on the
+    /// main thread, right after saving a link from the browser.
+    func testSavingLeavesTheIndexFreshForTheNextReader() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "A", url: "https://example.com/fresh")])
+
+        let after = s.rebuildCount
+        _ = s.allEntries()
+        XCTAssertEqual(s.rebuildCount, after, "保存之后立刻读，不该再触发一次重建")
+    }
+
+    /// But somebody else's edit still has to be noticed.
+    func testAnEditFromOutsideIsStillDetected() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "A", url: "https://example.com/a")])
+        XCTAssertEqual(s.allEntries().count, 1)
+
+        let file = root.appendingPathComponent("Bookmark/03-Areas/hand-written.md")
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try """
+        - 手写的一条
+          - url: https://example.com/by-hand
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(s.allEntries().count, 2, "外部新增的条目应当被发现")
+    }
+
     func testSecondSaveOfSameURLIsReportedAsDuplicate() throws {
         let s = try store()
         _ = s.save([VaultLink(title: "A", url: "https://example.com/dup")])

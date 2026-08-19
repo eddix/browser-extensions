@@ -88,6 +88,13 @@ public final class VaultStore: @unchecked Sendable {
     /// What the directory looked like when the index was last built. See
     /// `refreshIfStaleLocked`.
     private var indexedSnapshot = Snapshot()
+    /// How many times the vault has been re-parsed from disk.
+    ///
+    /// Internal so a test can assert on it. The thing worth asserting — that
+    /// saving a link doesn't make the next reader pay for a rebuild — has no
+    /// other observable trace: the answers are identical either way, only the
+    /// work differs.
+    private(set) var rebuildCount = 0
 
     public init(vaultRoot: URL) throws {
         var isDir: ObjCBool = false
@@ -230,6 +237,7 @@ public final class VaultStore: @unchecked Sendable {
     /// stored snapshot describing the older state, so the next check sees a
     /// difference and rebuilds again. The other order loses the edit for good.
     private func rebuildIndexLocked(snapshot: Snapshot) {
+        rebuildCount += 1
         indexedSnapshot = snapshot
         entryByURL.removeAll()
         entries.removeAll()
@@ -397,6 +405,24 @@ public final class VaultStore: @unchecked Sendable {
                     errors.append(SaveError(url: link.url, error: error.localizedDescription))
                 }
             }
+            // Reindex here, where the writing happened, rather than leaving it
+            // to whoever reads next.
+            //
+            // Our own writes move the files' timestamps, so the stored snapshot
+            // ends up describing the vault as it was before them — and the next
+            // read, seeing a difference it cannot attribute, re-parses
+            // everything to rebuild what it is already holding. That read is
+            // usually the hotkey: save a link in the browser, press ⌘⇧K, wait
+            // on the main thread. Doing it here spends the same milliseconds on
+            // the connection queue of a request that is already several seconds
+            // long.
+            //
+            // A full rebuild rather than patching the snapshot, because the
+            // snapshot is one summed digest with no per-file entries to patch,
+            // and stamping a fresh one over an index built before the write
+            // would swallow any edit that landed in between — the very race the
+            // snapshot-before-read order elsewhere exists to avoid.
+            if saved > 0 { rebuildIndexLocked(snapshot: diskSnapshot()) }
             return SaveResult(success: errors.isEmpty, saved: saved,
                               duplicates: duplicates, errors: errors)
         }
@@ -447,6 +473,9 @@ public final class VaultStore: @unchecked Sendable {
                 if let i = entries.firstIndex(where: { Self.normalize($0.url) == key }) {
                     entries[i] = updated
                 }
+                // Same reason as in `save`: our own write must not read back as
+                // a foreign change and cost the next reader a full re-parse.
+                rebuildIndexLocked(snapshot: diskSnapshot())
                 Log.write("vault: updated summary in \(existing.relativePath)")
                 return UpdateResult(success: true, file: existing.relativePath, error: nil)
             } catch {

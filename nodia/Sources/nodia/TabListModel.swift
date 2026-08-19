@@ -196,7 +196,11 @@ final class TabListModel: ObservableObject {
         guard let vaultStore else { vaultTabs = []; return }
 
         let openURLs = Set(arcTabs.map { VaultStore.normalize($0.url) })
-        vaultTabs = vaultStore.allEntries().compactMap { entry in
+        // Asked once. Every call re-walks the vault directory to check whether
+        // the index is stale, and this runs on the hotkey's own thread — a
+        // second ask for nothing but a number in the log line doubled that.
+        let saved = vaultStore.allEntries()
+        vaultTabs = saved.compactMap { entry in
             guard !openURLs.contains(VaultStore.normalize(entry.url)) else { return nil }
             // The right-hand tag stays short — it shares a line with the title.
             // The summary goes on the detail line, where a URL would be: for a
@@ -215,7 +219,7 @@ final class TabListModel: ObservableObject {
                 note: (entry.keywords + [summary]).joined(separator: " ")
             )
         }
-        Log.write("reload: \(vaultTabs.count) vault entries (\(vaultStore.allEntries().count) total)")
+        Log.write("reload: \(vaultTabs.count) vault entries (\(saved.count) total)")
     }
 
     func requestFocus() { focusRequest &+= 1 }
