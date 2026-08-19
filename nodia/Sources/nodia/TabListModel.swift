@@ -15,9 +15,13 @@ final class TabListModel: ObservableObject {
     @Published var selectedIndex: Int = 0
     @Published var focusRequest: Int = 0   // bumped to (re)focus the search field
 
-    private var arcTabs: [TabEntry] = []
-    private var vaultTabs: [TabEntry] = []
-    private var quickOpenRows: [TabEntry] = []
+    // Every assignment bumps `dataVersion`, which is what the cache below keys
+    // on. Done here rather than at the call sites so that a future loader can't
+    // forget: a stale list is invisible until the selection lands on a row that
+    // isn't there any more.
+    private var arcTabs: [TabEntry] = [] { didSet { dataVersion &+= 1 } }
+    private var vaultTabs: [TabEntry] = [] { didSet { dataVersion &+= 1 } }
+    private var quickOpenRows: [TabEntry] = [] { didSet { dataVersion &+= 1 } }
     private var tabs: [TabEntry] { arcTabs + quickOpenRows + vaultTabs }
     private weak var vaultStore: VaultStore?
 
@@ -224,7 +228,49 @@ final class TabListModel: ObservableObject {
 
     func requestFocus() { focusRequest &+= 1 }
 
-    var results: [TabEntry] { FuzzyMatcher.rank(tabs, query: query) }
+    // MARK: - Derived lists
+
+    /// Bumped by every load, so the cache can tell "same query" from "same
+    /// query, different tabs".
+    private var dataVersion = 0
+
+    /// One slot per derived list, emptied whenever the query or the data moves.
+    ///
+    /// These stay computed properties from the outside on purpose: the list,
+    /// the keyboard and the footer all ask the model the same questions, and a
+    /// stored copy that anyone forgot to refresh would put the selection on a
+    /// different row than the one lit up on screen. What's cached is the work,
+    /// not the answer — the answer is still recomputed the moment either input
+    /// changes.
+    ///
+    /// Worth caching because SwiftUI asks far more often than the answer
+    /// changes. Measured in by-domain mode, one arrow key re-entered
+    /// `domainGroups` five times: five full filters over every tab, each
+    /// followed by two rounds of zh collation.
+    private struct DerivedCache {
+        var query = ""
+        var version = -1
+        var results: [TabEntry]?
+        var clusters: [TabCluster]?
+        var domainGroups: [DomainGroup]?
+        var domainList: DomainList?
+        var quickOpenResults: [TabEntry]?
+    }
+    private var cache = DerivedCache()
+
+    private func derived<T>(_ slot: WritableKeyPath<DerivedCache, T?>, _ build: () -> T) -> T {
+        if cache.query != query || cache.version != dataVersion {
+            cache = DerivedCache()
+            cache.query = query
+            cache.version = dataVersion
+        }
+        if let hit = cache[keyPath: slot] { return hit }
+        let value = build()
+        cache[keyPath: slot] = value
+        return value
+    }
+
+    var results: [TabEntry] { derived(\.results) { FuzzyMatcher.rank(tabs, query: query) } }
 
     func moveSelection(_ delta: Int) {
         if var f = filling {
@@ -267,11 +313,13 @@ final class TabListModel: ObservableObject {
     /// Templates in ⌘T mode, filtered by a plain substring so browsing stays
     /// predictable — this list is short enough not to need ranking.
     var quickOpenResults: [TabEntry] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return quickOpenRows }
-        return quickOpenRows.filter {
-            $0.title.lowercased().contains(q) || $0.note.lowercased().contains(q)
-                || $0.url.lowercased().contains(q)
+        derived(\.quickOpenResults) {
+            let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+            guard !q.isEmpty else { return quickOpenRows }
+            return quickOpenRows.filter {
+                $0.title.lowercased().contains(q) || $0.note.lowercased().contains(q)
+                    || $0.url.lowercased().contains(q)
+            }
         }
     }
 
@@ -289,13 +337,15 @@ final class TabListModel: ObservableObject {
     // Duplicate clusters (most-duplicated first), filtered by the current query
     // so the view and the keyboard selection always agree on the same list.
     var clusters: [TabCluster] {
-        let all = DuplicateFinder.clusters(from: tabs)
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return all }
-        return all.filter {
-            $0.keeper.title.lowercased().contains(q)
-                || $0.keeper.url.lowercased().contains(q)
-                || $0.spaces.joined(separator: " ").lowercased().contains(q)
+        derived(\.clusters) {
+            let all = DuplicateFinder.clusters(from: tabs)
+            let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+            guard !q.isEmpty else { return all }
+            return all.filter {
+                $0.keeper.title.lowercased().contains(q)
+                    || $0.keeper.url.lowercased().contains(q)
+                    || $0.spaces.joined(separator: " ").lowercased().contains(q)
+            }
         }
     }
     var redundantCount: Int { clusters.reduce(0) { $0 + $1.duplicates.count } }
@@ -306,19 +356,42 @@ final class TabListModel: ObservableObject {
     var allDuplicates: [TabEntry] { clusters.flatMap(\.duplicates) }
 
     // Tabs grouped by domain, filtered by the current query as a plain
-    // substring over title/url/domain. `flatDomainTabs` is the
-    // group order flattened — the view renders `domainGroups`, the keyboard
-    // walks `flatDomainTabs`, and both stay in lockstep via `selectedIndex`.
+    // substring over title/url/domain.
     var domainGroups: [DomainGroup] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let filtered = q.isEmpty ? tabs : tabs.filter {
-            $0.title.lowercased().contains(q)
-                || $0.url.lowercased().contains(q)
-                || DomainFinder.domain(for: $0).lowercased().contains(q)
+        derived(\.domainGroups) {
+            let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+            let filtered = q.isEmpty ? tabs : tabs.filter {
+                $0.title.lowercased().contains(q)
+                    || $0.url.lowercased().contains(q)
+                    || DomainFinder.domain(for: $0).lowercased().contains(q)
+            }
+            return DomainFinder.groups(from: filtered)
         }
-        return DomainFinder.groups(from: filtered)
     }
-    var flatDomainTabs: [TabEntry] { domainGroups.flatMap(\.tabs) }
+
+    /// The groups flattened: the lines to draw, and the tabs the keyboard walks,
+    /// numbered together in one pass.
+    ///
+    /// One pass because it used to be two. The view flattened the groups to lay
+    /// them out and the model flattened them again to answer "which tab is row
+    /// 3", and two flattenings of the same data are two chances to disagree
+    /// about what a number means — with `selectedIndex` the only thing tying
+    /// the keyboard to what you can see.
+    var domainList: DomainList {
+        derived(\.domainList) {
+            var rows: [DomainRow] = []
+            var tabs: [TabEntry] = []
+            for group in domainGroups {
+                rows.append(.header(domain: group.domain, count: group.count))
+                for tab in group.tabs {
+                    rows.append(.tab(tab, index: tabs.count))
+                    tabs.append(tab)
+                }
+            }
+            return DomainList(rows: rows, tabs: tabs)
+        }
+    }
+    var flatDomainTabs: [TabEntry] { domainList.tabs }
 
     func icon(for tab: TabEntry) -> NSImage? { iconCache[tab.url] }
 
@@ -330,4 +403,29 @@ final class TabListModel: ObservableObject {
             }
         }
     }
+}
+
+/// One line of the by-domain list.
+///
+/// The two cases carry different kinds of number and the prefixed ids keep them
+/// from colliding: a header is identified by its domain, a tab by its own id,
+/// and `index` is the tab's position among *tabs only* — headers are drawn but
+/// never selected, so they take no number.
+enum DomainRow: Identifiable {
+    case header(domain: String, count: Int)
+    case tab(TabEntry, index: Int)
+
+    var id: String {
+        switch self {
+        case let .header(domain, _): return "h:\(domain)"
+        case let .tab(tab, _):       return "t:\(tab.id)"
+        }
+    }
+}
+
+/// The by-domain view as the two things it has to be at once: rows to draw, and
+/// the sequence the keyboard steps through.
+struct DomainList {
+    let rows: [DomainRow]
+    let tabs: [TabEntry]
 }

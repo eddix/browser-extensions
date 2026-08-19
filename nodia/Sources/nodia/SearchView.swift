@@ -6,6 +6,10 @@ import NodiaCore
 /// not a fifth mode but a state laid over whichever one you came from: it takes
 /// the whole body and the keyboard while it's up, and esc puts you back.
 ///
+/// The lists themselves are `SelectionList`; the rows they hold are in
+/// `SearchRows`. What's left here is the assembly: which list, what goes in it,
+/// and what the header and footer say about it.
+///
 /// Colors/fonts come from the active theme; keyboard handling lives in the
 /// panel controller.
 struct SearchView: View {
@@ -33,14 +37,14 @@ struct SearchView: View {
                 switch mode {
                 case .duplicates: duplicateList(r)
                 case .byDomain:   domainList(r)
-                case .quickOpen:      quickOpenList(r)
+                case .quickOpen:  quickOpenList(r)
                 case .search:     searchList(r)
                 }
             }
             Divider().overlay(r.palette.foreground.opacity(0.12))
             footer(r, mode: mode)
         }
-        .frame(width: 640, height: 460)
+        .frame(width: PanelMetrics.size.width, height: PanelMetrics.size.height)
         // Clipped even though the glass is already round, because the glass
         // does *not* clip what you hand it — its header only promises the
         // content will be placed inside the effect. Anything in here that
@@ -48,7 +52,7 @@ struct SearchView: View {
         // its own) then shows its square corners poking out past the rounded
         // glass, four of them, which reads as a rectangular frame drawn around
         // the panel.
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous))
         .onAppear { focusSoon() }
         .onChange(of: model.focusRequest) { _, _ in focusSoon() }
     }
@@ -119,7 +123,7 @@ struct SearchView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
-    // MARK: search mode
+    // MARK: - parameter form
 
     /// Every parameter at once, with the candidates for whichever one has the
     /// keyboard underneath.
@@ -135,8 +139,7 @@ struct SearchView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 12)
+            .padding(.vertical, 12)
 
             // The fields and the list under them are two different things —
             // what you're filling in, and what you can fill it with. Running
@@ -146,8 +149,7 @@ struct SearchView: View {
                 .overlay(r.palette.foreground.opacity(0.10))
                 .padding(.horizontal, 16)
 
-            candidateList(r)
-                .padding(.top, 8)
+            candidateList(r).padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Focus follows the model, and the model follows clicks — kept one-way
@@ -234,13 +236,11 @@ struct SearchView: View {
         let known = model.fillingHasCandidateList
         return Group {
             if candidates.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: known ? "magnifyingglass" : "keyboard")
-                        .font(.system(size: 22)).foregroundStyle(r.palette.secondary)
-                    Text(known ? "无匹配的候选值" : "自由输入，⏎ 打开")
-                        .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                EmptyState(
+                    icon: known ? "magnifyingglass" : "keyboard",
+                    message: known ? "无匹配的候选值" : "自由输入，⏎ 打开",
+                    iconSize: 22, theme: r
+                )
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(known ? "候选" : "最近用过")
@@ -248,54 +248,16 @@ struct SearchView: View {
                         .foregroundStyle(r.palette.secondary)
                         .padding(.horizontal, 18)
                         .padding(.bottom, 4)
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(spacing: 2) {
-                                ForEach(Array(candidates.enumerated()), id: \.element) { i, c in
-                                    HStack(spacing: 8) {
-                                        Image(systemName: known ? "circle.fill" : "clock")
-                                            .font(.system(size: known ? 6 : 10))
-                                            .foregroundStyle(r.palette.secondary)
-                                            .frame(width: 14)
-                                        Text(c.label)
-                                            .font(r.titleFont)
-                                            .foregroundStyle(r.palette.foreground)
-                                        if c.label != c.value {
-                                            Text(c.value)
-                                                .font(r.subtitleFont)
-                                                .foregroundStyle(r.palette.secondary)
-                                        }
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(i == model.fillingHighlight ? r.palette.selection : .clear)
-                                    .clipShape(RoundedRectangle(cornerRadius: 7))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 7)
-                                            .strokeBorder(i == model.fillingHighlight
-                                                          ? r.palette.accent.opacity(0.55) : .clear)
-                                    )
-                                    .contentShape(Rectangle())
-                                    // Identity is the candidate, never its
-                                    // position — the same rule every other list
-                                    // here follows, and for the same reason.
-                                    .id(c.value)
-                                    .onTapGesture { onTakeCandidate(c) }
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.bottom, 6)
-                        }
-                        .onChange(of: model.fillingHighlight) { _, i in
-                            // Nothing highlighted is a real state now, and it
-                            // must not scroll: it's what typing leaves behind,
-                            // and yanking the list back to the top mid-keystroke
-                            // is motion nobody asked for.
-                            guard let i, candidates.indices.contains(i) else { return }
-                            withAnimation(.easeOut(duration: 0.12)) {
-                                proxy.scrollTo(candidates[i].value, anchor: .center)
-                            }
+                    SelectionList(
+                        targets: candidates.map(\.value),
+                        selected: model.fillingHighlight,
+                        // No top inset: the caption above already provides the
+                        // gap, and a second one reads as a hole.
+                        insets: EdgeInsets(top: 0, leading: 8, bottom: 6, trailing: 8)
+                    ) {
+                        ForEach(Array(candidates.enumerated()), id: \.element) { i, c in
+                            candidateRow(c, highlighted: i == model.fillingHighlight, known: known, r)
+                                .selectableRow(id: c.value) { onTakeCandidate(c) }
                         }
                     }
                 }
@@ -303,6 +265,36 @@ struct SearchView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
+
+    private func candidateRow(
+        _ c: Choice, highlighted: Bool, known: Bool, _ r: ResolvedTheme
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: known ? "circle.fill" : "clock")
+                .font(.system(size: known ? 6 : 10))
+                .foregroundStyle(r.palette.secondary)
+                .frame(width: 14)
+            Text(c.label)
+                .font(r.titleFont)
+                .foregroundStyle(r.palette.foreground)
+            if c.label != c.value {
+                Text(c.value)
+                    .font(r.subtitleFont)
+                    .foregroundStyle(r.palette.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(highlighted ? r.palette.selection : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(highlighted ? r.palette.accent.opacity(0.55) : .clear)
+        )
+    }
+
+    // MARK: - quick open
 
     /// Every quick-open template. Plain search surfaces these too, but only once
     /// you know one exists — this is the browsable answer.
@@ -317,7 +309,32 @@ struct SearchView: View {
             // back completely empty would explain the one case you'd have
             // guessed on your own.
             if !problems.isEmpty { configProblems(problems, r) }
-            quickOpenRows(rows, problems: problems, r)
+
+            if rows.isEmpty {
+                EmptyState(
+                    icon: "bolt",
+                    // "还没有" would be a wrong answer when the file is full of
+                    // templates the parser rejected — the banner above is
+                    // already saying they exist.
+                    message: model.query.isEmpty
+                        ? (problems.isEmpty ? "还没有快速打开模板" : "没有一条模板能用")
+                        : "无匹配",
+                    hint: model.query.isEmpty && problems.isEmpty
+                        ? "在收藏库的 \(QuickOpenStore.fileName) 里添加" : nil,
+                    theme: r
+                )
+            } else {
+                SelectionList(targets: rows.map(\.id), selected: model.selectedIndex) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        // No tag: in this list every row is a template, so
+                        // printing "快速打开" on each of them says nothing and
+                        // costs a column.
+                        TabRow(tab: row, icon: nil, selected: index == model.selectedIndex,
+                               query: model.query, theme: r, showsTag: false)
+                            .selectableRow(id: row.id) { onActivate(row) }
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -358,141 +375,63 @@ struct SearchView: View {
         .background(r.palette.highlight.opacity(0.10))
     }
 
-    private func quickOpenRows(
-        _ rows: [TabEntry], problems: [String], _ r: ResolvedTheme
-    ) -> some View {
-        Group {
-            if rows.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "bolt")
-                        .font(.system(size: 28)).foregroundStyle(r.palette.secondary)
-                    // "还没有" would be a wrong answer when the file is full of
-                    // templates the parser rejected — the banner above is
-                    // already saying they exist.
-                    Text(model.query.isEmpty
-                         ? (problems.isEmpty ? "还没有快速打开模板" : "没有一条模板能用")
-                         : "无匹配")
-                        .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
-                    if model.query.isEmpty && problems.isEmpty {
-                        Text("在收藏库的 \(QuickOpenStore.fileName) 里添加")
-                            .font(r.captionFont).foregroundStyle(r.palette.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                                // Identity has to be the row's own id — the same
-                                // one ForEach uses. Overriding it with the
-                                // position made SwiftUI treat "row 0 of six" and
-                                // "row 0 of one" as the same view and keep the
-                                // old contents, so filtering down to a single
-                                // template still displayed whichever one
-                                // happened to be first before you typed.
-                                // No tag: in this list every row is a
-                                // template, so printing "快速打开" on each of
-                                // them says nothing and costs a column.
-                                TabRow(tab: row, icon: nil, selected: index == model.selectedIndex,
-                                       query: model.query, theme: r, showsTag: false)
-                                    .id(row.id)
-                                    .onTapGesture { onActivate(row) }
-                            }
-                        }
-                        .padding(.horizontal, 8).padding(.vertical, 6)
-                    }
-                    .onChange(of: model.selectedIndex) { _, i in
-                        guard rows.indices.contains(i) else { return }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(rows[i].id, anchor: .center)
-                        }
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+    // MARK: - search
 
     private func searchList(_ r: ResolvedTheme) -> some View {
         let results = model.results
         return Group {
             if results.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 28)).foregroundStyle(r.palette.secondary)
-                    Text(model.query.isEmpty ? "没有标签" : "无匹配")
-                        .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                EmptyState(
+                    icon: "magnifyingglass",
+                    message: model.query.isEmpty ? "没有标签" : "无匹配",
+                    theme: r
+                )
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(Array(results.enumerated()), id: \.element.id) { index, tab in
-                                TabRow(tab: tab, icon: model.icon(for: tab),
-                                       selected: index == model.selectedIndex,
-                                       query: model.query, theme: r)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { onActivate(tab) }
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                    }
-                    .onChange(of: model.selectedIndex) { _, index in
-                        guard results.indices.contains(index) else { return }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(results[index].id, anchor: .center)
-                        }
+                SelectionList(targets: results.map(\.id), selected: model.selectedIndex) {
+                    ForEach(Array(results.enumerated()), id: \.element.id) { index, tab in
+                        TabRow(tab: tab, icon: model.icon(for: tab),
+                               selected: index == model.selectedIndex,
+                               query: model.query, theme: r)
+                            .selectableRow(id: tab.id) { onActivate(tab) }
                     }
                 }
             }
         }
     }
 
-    // MARK: duplicates mode
+    // MARK: - duplicates
 
     private func duplicateList(_ r: ResolvedTheme) -> some View {
         let clusters = model.clusters
         return Group {
             if clusters.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle").font(.system(size: 28)).foregroundStyle(r.palette.secondary)
-                    Text(model.query.isEmpty ? "没有重复的标签 🎉" : "无匹配")
-                        .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                EmptyState(
+                    icon: "checkmark.circle",
+                    message: model.query.isEmpty ? "没有重复的标签 🎉" : "无匹配",
+                    theme: r
+                )
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(Array(clusters.enumerated()), id: \.element.id) { index, cluster in
-                                ClusterRow(cluster: cluster, icon: model.icon(for: cluster.keeper),
-                                           selected: index == model.selectedIndex, theme: r)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { onDedupeCluster(cluster) }
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                    }
-                    .onChange(of: model.selectedIndex) { _, index in
-                        guard clusters.indices.contains(index) else { return }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(clusters[index].id, anchor: .center)
-                        }
+                SelectionList(targets: clusters.map(\.id), selected: model.selectedIndex) {
+                    ForEach(Array(clusters.enumerated()), id: \.element.id) { index, cluster in
+                        ClusterRow(cluster: cluster, icon: model.icon(for: cluster.keeper),
+                                   selected: index == model.selectedIndex, theme: r)
+                            .selectableRow(id: cluster.id) { onDedupeCluster(cluster) }
                     }
                 }
             }
         }
     }
 
-    // MARK: by-domain mode
+    // MARK: - by domain
 
     private enum DomainRow: Identifiable {
         case header(domain: String, count: Int)
         case tab(TabEntry, index: Int)
 
+        /// Prefixed so a domain and a tab can never collide, and distinct from
+        /// the id the rows themselves carry — the keyboard walks tabs only, so
+        /// `SelectionList`'s targets are the bare tab ids while `ForEach`
+        /// identifies headers and tabs alike from here.
         var id: String {
             switch self {
             case let .header(domain, _): return "h:\(domain)"
@@ -503,8 +442,8 @@ struct SearchView: View {
 
     private func domainList(_ r: ResolvedTheme) -> some View {
         let groups = model.domainGroups
-        // Flatten to display rows; number only the tab rows so the running index
-        // lines up with model.selectedIndex / model.flatDomainTabs.
+        // Flattened for display; only the tab rows are numbered, so the running
+        // index lines up with model.selectedIndex and model.flatDomainTabs.
         var rows: [DomainRow] = []
         var flat = 0
         for group in groups {
@@ -517,38 +456,28 @@ struct SearchView: View {
 
         return Group {
             if groups.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 28)).foregroundStyle(r.palette.secondary)
-                    Text(model.query.isEmpty ? "没有标签" : "无匹配")
-                        .font(r.subtitleFont).foregroundStyle(r.palette.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                EmptyState(
+                    icon: "magnifyingglass",
+                    message: model.query.isEmpty ? "没有标签" : "无匹配",
+                    theme: r
+                )
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(rows) { row in
-                                switch row {
-                                case let .header(domain, count):
-                                    domainHeader(domain, count: count, r)
-                                case let .tab(tab, index):
-                                    TabRow(tab: tab, icon: model.icon(for: tab),
-                                           selected: index == model.selectedIndex,
-                                           query: model.query, theme: r)
-                                        .id(tab.id)
-                                        .contentShape(Rectangle())
-                                        .onTapGesture { onActivate(tab) }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                    }
-                    .onChange(of: model.selectedIndex) { _, index in
-                        let tabs = model.flatDomainTabs
-                        guard tabs.indices.contains(index) else { return }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(tabs[index].id, anchor: .center)
+                SelectionList(
+                    targets: model.flatDomainTabs.map(\.id), selected: model.selectedIndex
+                ) {
+                    ForEach(rows) { row in
+                        switch row {
+                        case let .header(domain, count):
+                            domainHeader(domain, count: count, r)
+                        case let .tab(tab, index):
+                            // The bare tab id, not this row's prefixed one:
+                            // it's what the scroller is given to look for, and
+                            // a key it can't find is a scroll that silently
+                            // doesn't happen.
+                            TabRow(tab: tab, icon: model.icon(for: tab),
+                                   selected: index == model.selectedIndex,
+                                   query: model.query, theme: r)
+                                .selectableRow(id: tab.id) { onActivate(tab) }
                         }
                     }
                 }
@@ -571,7 +500,7 @@ struct SearchView: View {
         .padding(.bottom, 2)
     }
 
-    // MARK: footer
+    // MARK: - footer
 
     // Raycast-style footer: count on the left, keycap hint chips on the right
     // (2-3 max — arrows/esc are muscle memory, not worth the clutter).
@@ -589,31 +518,31 @@ struct SearchView: View {
                 KeyHint(label: "打开", keys: ["⏎"], theme: r)
                 KeyHint(label: "下一个", keys: ["⇥"], theme: r)
             } else {
-            switch mode {
-            case .duplicates:
-                Text("\(model.clusters.count) 组重复 · 可清理 \(model.redundantCount) 个")
-                Spacer()
-                KeyHint(label: "关这组", keys: ["⏎"], theme: r)
-                KeyHint(label: "全部", keys: ["⌘", "⏎"], theme: r)
-                KeyHint(label: "返回", keys: ["⌘", "D"], theme: r)
-            case .byDomain:
-                Text("\(model.domainGroups.count) 域名 · \(model.flatDomainTabs.count) 标签")
-                Spacer()
-                KeyHint(label: "打开", keys: ["⏎"], theme: r)
-                KeyHint(label: "返回", keys: ["⌘", "G"], theme: r)
-            case .quickOpen:
-                Text("\(model.quickOpenResults.count) 个快速打开模板")
-                Spacer()
-                KeyHint(label: "填参数", keys: ["⏎"], theme: r)
-                KeyHint(label: "返回", keys: ["⌘", "T"], theme: r)
-            case .search:
-                Text("\(model.results.count) 个标签")
-                Spacer()
-                KeyHint(label: "打开", keys: ["⏎"], theme: r)
-                KeyHint(label: "快速打开", keys: ["⌘", "T"], theme: r)
-                KeyHint(label: "域名", keys: ["⌘", "G"], theme: r)
-                KeyHint(label: "去重", keys: ["⌘", "D"], theme: r)
-            }
+                switch mode {
+                case .duplicates:
+                    Text("\(model.clusters.count) 组重复 · 可清理 \(model.redundantCount) 个")
+                    Spacer()
+                    KeyHint(label: "关这组", keys: ["⏎"], theme: r)
+                    KeyHint(label: "全部", keys: ["⌘", "⏎"], theme: r)
+                    KeyHint(label: "返回", keys: ["⌘", "D"], theme: r)
+                case .byDomain:
+                    Text("\(model.domainGroups.count) 域名 · \(model.flatDomainTabs.count) 标签")
+                    Spacer()
+                    KeyHint(label: "打开", keys: ["⏎"], theme: r)
+                    KeyHint(label: "返回", keys: ["⌘", "G"], theme: r)
+                case .quickOpen:
+                    Text("\(model.quickOpenResults.count) 个快速打开模板")
+                    Spacer()
+                    KeyHint(label: "填参数", keys: ["⏎"], theme: r)
+                    KeyHint(label: "返回", keys: ["⌘", "T"], theme: r)
+                case .search:
+                    Text("\(model.results.count) 个标签")
+                    Spacer()
+                    KeyHint(label: "打开", keys: ["⏎"], theme: r)
+                    KeyHint(label: "快速打开", keys: ["⌘", "T"], theme: r)
+                    KeyHint(label: "域名", keys: ["⌘", "G"], theme: r)
+                    KeyHint(label: "去重", keys: ["⌘", "D"], theme: r)
+                }
             }
         }
         .font(r.captionFont)
@@ -627,152 +556,4 @@ struct SearchView: View {
         // back to a search box that isn't even rendered loses the keystroke.
         DispatchQueue.main.async { if model.filling == nil { searchFocused = true } }
     }
-}
-
-// MARK: - rows
-
-private struct TabRow: View {
-    let tab: TabEntry
-    let icon: NSImage?
-    let selected: Bool
-    let query: String
-    let theme: ResolvedTheme
-    var showsTag: Bool = true
-
-    var body: some View {
-        // Highlight fields: title, the detail line (URL, or a saved link's
-        // summary), and the right-hand tag. A tab's tag is its Space name,
-        // which no longer participates in matching — highlighting it would
-        // claim a match that didn't happen.
-        let taggable = tab.origin == .arcTab ? "" : tab.spaceTitle
-        let m = MatchHighlight.matches(query: query, fields: [tab.title, tab.detailLine, taggable])
-        HStack(spacing: 10) {
-            favicon(icon, theme: theme)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 8) {
-                    Text(highlighted(tab.title, Set(m[0]), theme: theme))
-                        .lineLimit(1).font(theme.titleFont).foregroundStyle(theme.palette.foreground)
-                    Spacer(minLength: 8)
-                    if showsTag && !tab.spaceTitle.isEmpty {
-                        // Capped and truncating: this tag shares a line with the
-                        // title, so an unexpectedly long value must shrink
-                        // rather than push the row past the panel's edge.
-                        Text(highlighted(tab.spaceTitle, Set(m[2]), theme: theme))
-                            .lineLimit(1).truncationMode(.tail)
-                            .font(theme.captionFont)
-                            .foregroundStyle(theme.palette.secondary)
-                            .layoutPriority(-1)
-                            .frame(maxWidth: 180, alignment: .trailing)
-                    }
-                }
-                Text(highlighted(tab.detailLine, Set(m[1]), theme: theme))
-                    .lineLimit(1).truncationMode(.tail)
-                    .font(theme.subtitleFont).foregroundStyle(theme.palette.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .rowChrome(selected: selected, theme: theme)
-        .help(tab.url)
-    }
-}
-
-private struct ClusterRow: View {
-    let cluster: TabCluster
-    let icon: NSImage?
-    let selected: Bool
-    let theme: ResolvedTheme
-
-    var body: some View {
-        HStack(spacing: 10) {
-            favicon(icon, theme: theme)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(cluster.keeper.title)
-                        .lineLimit(1).font(theme.titleFont).foregroundStyle(theme.palette.foreground)
-                    Text("×\(cluster.count)")
-                        .font(theme.captionFont.weight(.semibold))
-                        .foregroundStyle(theme.palette.highlight)
-                }
-                Text("保留 \(cluster.keeper.spaceTitle) · 关 \(cluster.duplicates.map(\.spaceTitle).joined(separator: ", "))")
-                    .lineLimit(1).font(theme.subtitleFont)
-                    .foregroundStyle(theme.palette.secondary)
-            }
-            Spacer(minLength: 8)
-        }
-        .rowChrome(selected: selected, theme: theme)
-    }
-}
-
-/// One "label + keycaps" footer hint, e.g. 打开 [⏎] or 分组 [⌘][G].
-private struct KeyHint: View {
-    let label: String
-    let keys: [String]
-    let theme: ResolvedTheme
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(label)
-                .font(theme.captionFont)
-                .foregroundStyle(theme.palette.secondary)
-            HStack(spacing: 2) {
-                ForEach(keys, id: \.self) { key in
-                    Text(key)
-                        .font(theme.captionFont.weight(.medium))
-                        .foregroundStyle(theme.palette.secondary)
-                        .frame(minWidth: 13)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(theme.palette.foreground.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                }
-            }
-        }
-    }
-}
-
-@ViewBuilder
-private func favicon(_ icon: NSImage?, theme: ResolvedTheme) -> some View {
-    Group {
-        if let icon {
-            Image(nsImage: icon).resizable()
-        } else {
-            Image(systemName: "globe").resizable().foregroundStyle(theme.palette.secondary)
-        }
-    }
-    .frame(width: 18, height: 18)
-    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-}
-
-private extension View {
-    /// Selected-row treatment: a faint fill plus an accent stroke.
-    ///
-    /// The fill has to stay faint because it *lightens* the background, and
-    /// every point of alpha it gains is taken out of the contrast of the text
-    /// sitting on it — which is what made a selected row's URL unreadable in
-    /// half the palettes. The stroke carries the visibility instead: it says
-    /// "this row" just as clearly and changes nothing underneath the text.
-    func rowChrome(selected: Bool, theme: ResolvedTheme) -> some View {
-        self
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(selected ? theme.palette.selection : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(selected ? theme.palette.accent.opacity(0.55) : .clear)
-            )
-    }
-}
-
-private func highlighted(_ text: String, _ matched: Set<Int>, theme: ResolvedTheme) -> AttributedString {
-    var result = AttributedString()
-    for (index, character) in text.enumerated() {
-        var piece = AttributedString(String(character))
-        if matched.contains(index) {
-            piece.foregroundColor = theme.palette.highlight
-            piece.inlinePresentationIntent = .stronglyEmphasized
-        }
-        result += piece
-    }
-    return result
 }

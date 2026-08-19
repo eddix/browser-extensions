@@ -12,8 +12,6 @@ final class KeyPanel: NSPanel {
 /// Owns the search panel: builds it lazily, centers + shows it, installs a local
 /// key monitor for ↑↓/⏎/esc while visible, and routes activation.
 final class SearchPanelController: NSObject, NSWindowDelegate {
-    static let panelSize = CGSize(width: 640, height: 460)
-    static let cornerRadius: CGFloat = 16
     private let model: TabListModel
     private let themeStore: ThemeStore
     private let onOpenSettings: () -> Void
@@ -78,7 +76,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
 
     private func makePanel() -> KeyPanel {
         let panel = KeyPanel(
-            contentRect: NSRect(origin: .zero, size: Self.panelSize),
+            contentRect: NSRect(origin: .zero, size: PanelMetrics.size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -108,7 +106,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
             onOpenSettings: { [weak self] in self?.openSettings() }
         )
         let host = NSHostingView(rootView: root)
-        host.frame = NSRect(origin: .zero, size: Self.panelSize)
+        host.frame = NSRect(origin: .zero, size: PanelMetrics.size)
         // The glass *contains* the content rather than sitting behind it, so it
         // owns the background and the shape — the SwiftUI side draws neither.
         //
@@ -118,8 +116,8 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         // content both came out 0×0, which drew no glass at all while the
         // content spilled out of its zero-sized parent and looked almost right.
         host.translatesAutoresizingMaskIntoConstraints = false
-        let shell = SystemGlass.wrap(host, cornerRadius: Self.cornerRadius)
-        shell.frame = NSRect(origin: .zero, size: Self.panelSize)
+        let shell = SystemGlass.wrap(host, cornerRadius: PanelMetrics.cornerRadius)
+        shell.frame = NSRect(origin: .zero, size: PanelMetrics.size)
         shell.autoresizingMask = [.width, .height]
 
         // The clip is what makes the window's shadow follow the panel's shape.
@@ -136,9 +134,9 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         // square. `invalidateShadow()` doesn't help and neither does turning
         // the shadow on after the window is up — both recompute from a mask
         // that was square to begin with. It was never a question of timing.
-        let clip = NSView(frame: NSRect(origin: .zero, size: Self.panelSize))
+        let clip = NSView(frame: NSRect(origin: .zero, size: PanelMetrics.size))
         clip.wantsLayer = true
-        clip.layer?.cornerRadius = Self.cornerRadius
+        clip.layer?.cornerRadius = PanelMetrics.cornerRadius
         clip.layer?.cornerCurve = .continuous
         clip.layer?.masksToBounds = true
         clip.autoresizingMask = [.width, .height]
