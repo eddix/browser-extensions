@@ -68,7 +68,9 @@ public final class QuickOpenState {
     /// values on one platform and a different set on another — so a remembered
     /// value that isn't among *this* template's candidates is discarded rather
     /// than forced into a URL that can't work.
-    public func prefill(for template: QuickOpenTemplate, parameter: String) -> String {
+    public func prefill(
+        for template: QuickOpenTemplate, parameter: String, given values: [String: String] = [:]
+    ) -> String {
         let remembered = lastValue(for: parameter)
         switch template.kind(of: parameter) {
         case .choices(let list):
@@ -76,14 +78,39 @@ public final class QuickOpenState {
             return list.first?.value ?? ""
         case .input:
             return remembered ?? ""
+        case .varying:
+            let list = template.choices(for: parameter, given: values)
+            guard let remembered else { return list.first?.value ?? "" }
+            if list.contains(where: { $0.value == remembered }) { return remembered }
+            // What was remembered is last session's value, which belonged to
+            // whichever case was selected then. If the case has changed since,
+            // the useful thing to restore is the same row's value now — you
+            // were looking at a service, not at a number.
+            if let row = template.varyingRow(of: parameter, holding: remembered),
+               let hit = list.first(where: { $0.label == row }) {
+                return hit.value
+            }
+            return list.first?.value ?? ""
         }
     }
 
     /// Every parameter's starting value, ready to open with.
     public func prefill(for template: QuickOpenTemplate) -> [String: String] {
         var values: [String: String] = [:]
+        // Independent fields first: a varying one has no candidates at all
+        // until the field it depends on has an answer, and URL order — which is
+        // what `parameters` follows — does not promise to put them in that
+        // order. Only one level of dependency is allowed, so two passes is all
+        // it can ever take.
         for parameter in template.parameters {
-            values[parameter] = prefill(for: template, parameter: parameter)
+            guard case .varying = template.kind(of: parameter) else {
+                values[parameter] = prefill(for: template, parameter: parameter, given: values)
+                continue
+            }
+        }
+        for parameter in template.parameters {
+            guard case .varying = template.kind(of: parameter) else { continue }
+            values[parameter] = prefill(for: template, parameter: parameter, given: values)
         }
         return values
     }

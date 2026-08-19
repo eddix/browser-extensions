@@ -9,10 +9,18 @@ import Foundation
 public struct Choice: Sendable, Hashable {
     public let label: String
     public let value: String
+    /// This candidate's value in each case of the parameter it varies by, keyed
+    /// by that parameter's candidate labels. Empty for an ordinary choice,
+    /// whose value is the same whatever else is selected.
+    ///
+    /// See `ParameterKind.varying`. `value` is meaningless while this is
+    /// non-empty — the value isn't knowable until you know the case.
+    public let per: [String: String]
 
-    public init(label: String, value: String) {
+    public init(label: String, value: String, per: [String: String] = [:]) {
         self.label = label
         self.value = value
+        self.per = per
     }
 
     /// Parses `显示名=值`. Without `=`, the value doubles as its own label.
@@ -37,6 +45,22 @@ public struct Choice: Sendable, Hashable {
 public enum ParameterKind: Sendable, Equatable {
     case choices([Choice])
     case input
+    /// A list whose *values* depend on what another parameter is set to, while
+    /// the things you pick from stay the same.
+    ///
+    /// This is not two lists multiplied together. A platform has a handful of
+    /// regions and a great many services, and a service keeps its name in every
+    /// region while its opaque internal id does not — one name, a different
+    /// number per region. Modelling that as a combination means writing the
+    /// region list out once per service; modelling it as a dependency means the
+    /// regions are declared once and each service is a single row carrying its
+    /// numbers.
+    ///
+    /// So the field shows service *names*, and which id that name currently
+    /// means is decided by the region field above it. Change the region and the
+    /// same name resolves to a different id, which is exactly what happens on
+    /// the platform.
+    case varying(by: String, [Choice])
 }
 
 /// A "platform + parameters" entry: one template standing in for every URL you
@@ -101,9 +125,50 @@ public struct QuickOpenTemplate: Sendable, Equatable {
         params[parameter] ?? .input
     }
 
-    public func choices(for parameter: String) -> [Choice] {
-        if case .choices(let list) = kind(of: parameter) { return list }
-        return []
+    /// The candidates to offer for a parameter, given what the rest of the form
+    /// currently says.
+    ///
+    /// `given` only matters for a varying parameter, and there it decides both
+    /// the values and which rows appear at all: a service with no entry for the
+    /// selected region is one that isn't deployed there, and offering it would
+    /// build a URL to nothing. Until the parameter it varies by has an answer
+    /// there is nothing to show, which is why the form fills in left-to-right
+    /// URL order rather than alphabetically.
+    public func choices(for parameter: String, given values: [String: String] = [:]) -> [Choice] {
+        switch kind(of: parameter) {
+        case .choices(let list):
+            return list
+        case .input:
+            return []
+        case .varying(let by, let list):
+            guard let key = caseKey(of: by, in: values) else { return [] }
+            return list.compactMap { row in
+                row.per[key].map { Choice(label: row.label, value: $0) }
+            }
+        }
+    }
+
+    /// Which case of `by` is currently selected, as the key `per` is written
+    /// with — the *label*, since that's the short name a person types into the
+    /// table, not the hostname it expands to.
+    func caseKey(of by: String, in values: [String: String]) -> String? {
+        guard let current = values[by], !current.isEmpty else { return nil }
+        // `by` is required to be a plain list, so this can't recurse.
+        if let hit = choices(for: by).first(where: { $0.value == current }) { return hit.label }
+        // Free input, or a value typed in by hand: take it at face value, so a
+        // table can be keyed on typed text too.
+        return current
+    }
+
+    /// Which row of a varying parameter a value came from, whatever case was
+    /// selected at the time.
+    ///
+    /// This is what makes the region switchable without losing your place: the
+    /// field is holding an id, the id belongs to a name, and after the switch
+    /// you want the same name's *new* id rather than the first row of the list.
+    func varyingRow(of parameter: String, holding value: String) -> String? {
+        guard case .varying(_, let list) = kind(of: parameter), !value.isEmpty else { return nil }
+        return list.first { $0.per.values.contains(value) }?.label
     }
 
     /// Substitutes values and returns the URL to open. A missing value leaves
@@ -200,11 +265,11 @@ public struct QuickOpenStore: Sendable {
         var problems: [String] = []
         var shared: [String: [Choice]] = [:]
         for (name, raw) in (root["shared"] as? [String: Any]) ?? [:] {
-            guard let list = raw as? [String] else {
-                problems.append("shared.\(name) 应该是字符串数组")
+            guard let list = raw as? [Any] else {
+                problems.append("shared.\(name) 应该是数组")
                 continue
             }
-            shared[name] = list.map(Choice.parse)
+            shared[name] = choices(from: list, in: "shared.\(name)", problems: &problems)
         }
 
         guard let entries = root["templates"] as? [[String: Any]] else {
@@ -251,12 +316,35 @@ public struct QuickOpenStore: Sendable {
                         continue
                     }
                     listed = list
-                } else if let list = spec["choices"] as? [String] {
-                    listed = list.map(Choice.parse)
+                } else if let list = spec["choices"] as? [Any] {
+                    listed = choices(from: list, in: "\(label) 的参数 \(param)", problems: &problems)
                 } else if spec["input"] as? Bool == true {
                     listed = nil
                 } else {
                     problems.append("\(label) 的参数 \(param) 需要 choices / input / use 之一")
+                    continue
+                }
+
+                // `by` turns the list into one whose values depend on another
+                // field. Checked here rather than at use, because a `by` on a
+                // list of plain strings has no values to vary and would leave
+                // the field permanently empty with nothing said about why.
+                if let by = (spec["by"] as? String).map(TextClean.strip), !by.isEmpty {
+                    guard let list = listed, !list.isEmpty else {
+                        problems.append("\(label) 的参数 \(param) 写了 by，但没有候选")
+                        continue
+                    }
+                    guard list.allSatisfy({ !$0.per.isEmpty }) else {
+                        problems.append("\(label) 的参数 \(param) 写了 by，"
+                                        + "但有候选没写 per —— 它在任何一档下都取不到值")
+                        continue
+                    }
+                    params[param] = .varying(by: by, list)
+                    continue
+                }
+                if let list = listed, list.contains(where: { !$0.per.isEmpty }) {
+                    problems.append("\(label) 的参数 \(param) 的候选写了 per，"
+                                    + "却没说 by 哪个参数，取不到值")
                     continue
                 }
 
@@ -291,9 +379,10 @@ public struct QuickOpenStore: Sendable {
             // A described parameter that appears nowhere in the URL is dead
             // config — usually a rename that only got applied on one side.
             let placeholders = Set(template.parameters)
-            for param in params.keys where !placeholders.contains(param) {
+            for param in params.keys.sorted() where !placeholders.contains(param) {
                 problems.append("\(label) 描述了参数 \(param)，但 url 里没有 {\(param)}")
             }
+            problems.append(contentsOf: dependencyProblems(of: template, label: label))
             // A template with no parameters is already a finished URL, so it
             // can be checked now rather than discovered at the moment you press
             // ⏎ and nothing happens. One with parameters can't: its URL isn't
@@ -304,6 +393,94 @@ public struct QuickOpenStore: Sendable {
             templates.append(template)
         }
         return LoadResult(templates: templates, problems: problems)
+    }
+
+    /// Parses one candidate list. An entry is either `显示名=值`, or a row
+    /// carrying `per` — one name and the value it takes in each case of the
+    /// parameter its field varies by.
+    static func choices(from raw: [Any], in context: String, problems: inout [String]) -> [Choice] {
+        var parsed: [Choice] = []
+        for (index, item) in raw.enumerated() {
+            if let text = item as? String {
+                parsed.append(Choice.parse(text))
+                continue
+            }
+            guard let row = item as? [String: Any] else {
+                problems.append("\(context) 第 \(index + 1) 项既不是字符串也不是对象")
+                continue
+            }
+            guard let name = (row["label"] as? String).map(TextClean.strip), !name.isEmpty else {
+                problems.append("\(context) 第 \(index + 1) 项缺少 label")
+                continue
+            }
+            guard let cases = row["per"] as? [String: Any] else {
+                problems.append("\(context)「\(name)」缺少 per —— 各处都一样的候选写成字符串就行")
+                continue
+            }
+            var values: [String: String] = [:]
+            for (key, value) in cases {
+                guard let text = value as? String else {
+                    problems.append("\(context)「\(name)」的 per.\(key) 应该是字符串")
+                    continue
+                }
+                values[TextClean.strip(key)] = TextClean.strip(text)
+            }
+            guard !values.isEmpty else {
+                problems.append("\(context)「\(name)」的 per 是空的")
+                continue
+            }
+            parsed.append(Choice(label: name, value: "", per: values))
+        }
+        return parsed
+    }
+
+    /// Problems in how one field depends on another. All of them produce a
+    /// field that is silently empty or silently short some rows, which is the
+    /// kind of failure worth spending a check on: nothing is broken enough to
+    /// notice, you just never see the entry you were looking for.
+    static func dependencyProblems(of template: QuickOpenTemplate, label: String) -> [String] {
+        var found: [String] = []
+        for param in template.params.keys.sorted() {
+            guard case .varying(let by, let rows) = template.kind(of: param) else { continue }
+
+            guard by != param else {
+                found.append("\(label) 的参数 \(param) 说它随自己变化")
+                continue
+            }
+            // Checked before the kind, because an undescribed parameter reads
+            // as free input and would otherwise be reported as one — sending
+            // you to look at how `by` is declared when the problem is that it
+            // isn't.
+            guard template.params[by] != nil else {
+                found.append("\(label) 的参数 \(param) 说它随 \(by) 变化，但没描述过 \(by)")
+                continue
+            }
+            switch template.kind(of: by) {
+            case .choices(let cases):
+                // A `per` key naming no case is a row that can never be
+                // reached — usually the region list was renamed and the table
+                // wasn't, and the field just quietly comes up short.
+                let known = Set(cases.map(\.label))
+                let unknown = Set(rows.flatMap(\.per.keys)).subtracting(known).sorted()
+                for key in unknown {
+                    found.append("\(label) 的参数 \(param) 里有 per.\(key)，"
+                                 + "但 \(by) 没有叫 \(key) 的候选，这些行永远选不到")
+                }
+                // The reverse: a case no row covers means picking it empties
+                // the field entirely.
+                let covered = Set(rows.flatMap(\.per.keys))
+                for case_ in cases.map(\.label).filter({ !covered.contains($0) }) {
+                    found.append("\(label) 的 \(by) 选 \(case_) 时，\(param) 一个候选都没有")
+                }
+            case .input:
+                found.append("\(label) 的参数 \(param) 随 \(by) 变化，"
+                             + "但 \(by) 是自由输入 —— per 的键得和一份固定的候选表对得上")
+            case .varying:
+                found.append("\(label) 的参数 \(param) 随 \(by) 变化，而 \(by) 自己也随别的变化，"
+                             + "只支持一层")
+            }
+        }
+        return found
     }
 
     /// Written on first run so the format is discoverable by example rather
@@ -317,6 +494,10 @@ public struct QuickOpenStore: Sendable {
               "i18n=console-i18n.example.com",
               "us=console-us.example.com",
               "eu=console-eu.example.net"
+            ],
+            "services": [
+              { "label": "team.trade.checkout", "per": { "i18n": "100200300", "us": "400500600", "eu": "700800900" } },
+              { "label": "team.shop.api", "per": { "i18n": "100200301", "us": "400500601" } }
             ]
           },
 
@@ -351,6 +532,16 @@ public struct QuickOpenStore: Sendable {
               "params": {
                 "region": { "choices": ["SG=sg", "VA=us", "EU=eu-central-1"] },
                 "task_id": { "input": true }
+              }
+            },
+            {
+              "name": "服务详情",
+              "note": "服务在每个区域是同一个名字、不同的内部 id。所以 id 这一栏列的是名字，值随上面的站点变 —— 表在 shared.services 里，加一个服务就是加一行",
+              "keywords": ["service", "服务详情"],
+              "url": "https://{site}/services/{id}",
+              "params": {
+                "site": { "use": "console" },
+                "id": { "use": "services", "by": "site" }
               }
             }
           ]

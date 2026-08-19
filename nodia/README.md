@@ -236,6 +236,50 @@ didn't work without it:
 - **The same list appears in template after template.** `shared` names it once
   and `{ "use": "region" }` refers to it — five regions across six templates
   was already six chances to get one wrong.
+- **One field's values can depend on another's answer.** A platform has a
+  handful of regions and a great many services. A service keeps its *name* in
+  every region; its opaque internal id does not — one name, a different number
+  per region, and the number is only valid in its own. So the id field lists
+  names, and which id a name currently means is decided by the region field
+  above it:
+
+  ```json
+  "shared": {
+    "sites": ["ROW=console.example.com", "EU=console-eu.example.net"],
+    "services": [
+      { "label": "team.arch.ease", "per": { "ROW": "500331951", "EU": "300063133" } },
+      { "label": "team.shop.api",  "per": { "ROW": "500331952" } }
+    ]
+  },
+  "params": {
+    "site": { "use": "sites" },
+    "id":   { "use": "services", "by": "site" }
+  }
+  ```
+
+  Note what is *not* here: the region list is written once, not once per
+  service. Adding a service is one row. Modelling this as combinations instead
+  — one entry per service, each carrying its own copy of the regions — is the
+  version that stops scaling at about the tenth service, and it was the first
+  thing tried.
+
+  `per` keys are the *labels* of the candidates in the field being varied by
+  (`ROW`, not `console.example.com`), since those are the short names you write
+  the table with. A service with no entry for the selected region simply isn't
+  offered there — that's what "not deployed in EU" looks like, and offering it
+  would build a URL to an id that doesn't exist.
+
+  Changing the region keeps the **row**, not the value: pick `team.shop.api` in
+  ROW, switch to EU, and the field holds that service's EU id rather than
+  jumping to the top of the list. Landing on the first row instead would move
+  you to a different service, and the only visible trace would be a digit in a
+  URL nobody reads. This holds across sessions too — what's remembered is last
+  time's id, and last time may have been a different region.
+
+  Only one level: a field can't vary by a field that itself varies. The
+  mistakes that produce a silently empty or silently short list are all
+  reported — a `per` key naming no candidate, a candidate no row covers, a
+  `by` pointing at free input or at nothing.
 
 ### The form
 

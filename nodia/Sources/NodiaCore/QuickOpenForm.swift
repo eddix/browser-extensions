@@ -50,7 +50,8 @@ public struct QuickOpenForm {
         self.focus = blank ?? 0
         let parameter = template.parameters.indices.contains(self.focus)
             ? template.parameters[self.focus] : ""
-        self.draft = Self.display(self.values[parameter] ?? "", of: parameter, in: template)
+        self.draft = Self.display(self.values[parameter] ?? "", of: parameter, in: template,
+                                  given: self.values)
         self.filter = ""
     }
 
@@ -66,7 +67,7 @@ public struct QuickOpenForm {
     public func text(of parameter: String) -> String {
         parameter == self.parameter
             ? draft
-            : Self.display(values[parameter] ?? "", of: parameter, in: template)
+            : Self.display(values[parameter] ?? "", of: parameter, in: template, given: values)
     }
 
     /// The URL as it stands — exactly what opening would use, so a preview of
@@ -78,8 +79,10 @@ public struct QuickOpenForm {
     public var firstBlank: Int? { Self.firstBlank(template, values) }
 
     public var hasCandidateList: Bool {
-        if case .choices = template.kind(of: parameter) { return true }
-        return false
+        switch template.kind(of: parameter) {
+        case .choices, .varying: return true
+        case .input: return false
+        }
     }
 
     /// Candidates under the focused field. A parameter with a list shows that
@@ -88,8 +91,11 @@ public struct QuickOpenForm {
     public var candidates: [Choice] {
         let all: [Choice]
         switch template.kind(of: parameter) {
-        case .choices(let list): all = list
         case .input: all = state.recentInputs(for: parameter).map { Choice(label: $0, value: $0) }
+        // Resolved against the rest of the form, not the template alone: a
+        // varying field's list is a different list once the field it depends on
+        // changes.
+        case .choices, .varying: all = template.choices(for: parameter, given: values)
         }
         let q = filter.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return all }
@@ -107,7 +113,8 @@ public struct QuickOpenForm {
     public mutating func type(_ text: String) {
         draft = text
         filter = text
-        values[parameter] = Self.resolve(text, of: parameter, in: template)
+        values[parameter] = Self.resolve(text, of: parameter, in: template, given: values)
+        resettleDependents(of: parameter)
         // Typing is not choosing. The list refilters under the cursor, so the
         // row it was on is not the row that position now names.
         highlighted = nil
@@ -119,6 +126,32 @@ public struct QuickOpenForm {
     public mutating func take(_ choice: Choice) {
         draft = choice.label
         values[parameter] = choice.value
+        resettleDependents(of: parameter)
+    }
+
+    /// Re-resolves every field whose values depend on the one just changed.
+    ///
+    /// It keeps your *row*, not your value. The field is holding an id that
+    /// belongs to a service name, and after switching region you want that same
+    /// service's new id — not the first entry of the new list, and not the old
+    /// id, which now points at a different service or at nothing. A service
+    /// missing from the new region has no row to keep, and that falls back to
+    /// the first available one.
+    private mutating func resettleDependents(of changed: String) {
+        for field in parameters {
+            guard case .varying(let by, _) = template.kind(of: field), by == changed else {
+                continue
+            }
+            let row = template.varyingRow(of: field, holding: values[field] ?? "")
+            let available = template.choices(for: field, given: values)
+            let landing = row.flatMap { name in available.first { $0.label == name } }
+                ?? available.first
+            values[field] = landing?.value ?? ""
+            if field == parameter {
+                draft = landing?.label ?? ""
+                highlighted = nil
+            }
+        }
     }
 
     /// ↑↓. Moving the highlight *is* choosing: the field and the URL update as
@@ -148,7 +181,7 @@ public struct QuickOpenForm {
     public mutating func focusField(_ index: Int) {
         guard parameters.indices.contains(index) else { return }
         focus = index
-        draft = Self.display(values[parameter] ?? "", of: parameter, in: template)
+        draft = Self.display(values[parameter] ?? "", of: parameter, in: template, given: values)
         // A fresh field starts by showing its whole list, not the leftovers of
         // what you typed into the previous one, and with nothing picked out of
         // it — the value here came from what you last used, which is a
@@ -163,19 +196,22 @@ public struct QuickOpenForm {
     /// showing the raw value would be its own bug report: a region picker reads
     /// "VA" and expands to `us`.
     static func display(
-        _ value: String, of parameter: String, in template: QuickOpenTemplate
+        _ value: String, of parameter: String, in template: QuickOpenTemplate,
+        given values: [String: String] = [:]
     ) -> String {
-        template.choices(for: parameter).first { $0.value == value }?.label ?? value
+        template.choices(for: parameter, given: values)
+            .first { $0.value == value }?.label ?? value
     }
 
     /// Text → value. A string naming a candidate becomes that candidate's
     /// value; anything else is taken literally, so a namespace or task id that
     /// appears in no list still works.
     static func resolve(
-        _ text: String, of parameter: String, in template: QuickOpenTemplate
+        _ text: String, of parameter: String, in template: QuickOpenTemplate,
+        given values: [String: String] = [:]
     ) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
-        let list = template.choices(for: parameter)
+        let list = template.choices(for: parameter, given: values)
         let lowered = trimmed.lowercased()
         if let hit = list.first(where: { $0.label.lowercased() == lowered })
             ?? list.first(where: { $0.value.lowercased() == lowered }) {
