@@ -172,6 +172,123 @@ final class VaultStoreTests: XCTestCase {
         XCTAssertEqual(s.allEntries().count, 2, "外部新增的条目应当被发现")
     }
 
+    // MARK: - Removing
+
+    /// The block goes: title bullet and every field under it.
+    func testRemoveTakesTheWholeEntry() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "要删的", url: "https://example.com/gone",
+                              kind: .readlater, summary: "一句话")])
+        _ = s.save([VaultLink(title: "留着的", url: "https://example.com/stays")])
+
+        let result = s.remove(url: "https://example.com/gone")
+        XCTAssertTrue(result.success)
+        XCTAssertEqual(result.removed, 1)
+
+        let text = read(inboxFile())
+        XCTAssertFalse(text.contains("要删的"))
+        XCTAssertFalse(text.contains("https://example.com/gone"))
+        XCTAssertFalse(text.contains("一句话"), "字段行也该一起走")
+        XCTAssertTrue(text.contains("留着的"), "邻居不能被牵连")
+        XCTAssertTrue(text.contains("---\ndate:"), "frontmatter 要留着")
+    }
+
+    /// Filed twice means removed twice. Taking only the indexed copy leaves the
+    /// extension's icon green, which reads as "the removal didn't work".
+    ///
+    /// The second copy is written by hand rather than saved, because `save`
+    /// declines a URL the index already holds — which is itself the reason a
+    /// duplicate can only arrive this way: you filed it in Obsidian yourself,
+    /// or moved an entry between files.
+    func testRemoveTakesEveryCopyAcrossFiles() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "收件箱里的", url: "https://example.com/twice")])
+
+        let areas = root.appendingPathComponent("Bookmark/03-Areas")
+        try FileManager.default.createDirectory(at: areas, withIntermediateDirectories: true)
+        try """
+        - 手写归档里的同一条
+          - url: https://example.com/twice
+          - tag: #from-browser
+
+        - 不相干的一条
+          - url: https://example.com/other
+        """.write(to: areas.appendingPathComponent("笔记.md"), atomically: true, encoding: .utf8)
+
+        let result = s.remove(url: "https://example.com/twice")
+        XCTAssertEqual(result.removed, 2)
+        XCTAssertEqual(result.files.count, 2)
+        XCTAssertNil(s.entry(for: "https://example.com/twice"))
+        XCTAssertTrue(read("Bookmark/03-Areas/笔记.md").contains("不相干的一条"))
+        XCTAssertTrue(read(inboxFile()).contains("date:"), "收件箱的 frontmatter 要留着")
+    }
+
+    /// A todo is a checkbox bullet, and removing one is not completing it —
+    /// completing happens in Obsidian. This only has to not choke on the shape.
+    func testRemoveWorksOnATodoCheckbox() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "记错的待办", url: "https://example.com/t", kind: .todo)])
+        XCTAssertTrue(read("Bookmark/00-Todo.md").contains("- [ ] 记错的待办"))
+
+        XCTAssertEqual(s.remove(url: "https://example.com/t").removed, 1)
+        XCTAssertFalse(read("Bookmark/00-Todo.md").contains("记错的待办"))
+    }
+
+    /// Matching is normalized the same way saving is, or the link you saved
+    /// would not be the link you can remove.
+    func testRemoveMatchesTheSameWaySavingDoes() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "A", url: "https://example.com/a")])
+        XCTAssertEqual(s.remove(url: "https://example.com/a/#section").removed, 1)
+    }
+
+    func testRemovingSomethingThatIsNotThereSaysSo() throws {
+        let s = try store()
+        _ = s.save([VaultLink(title: "A", url: "https://example.com/a")])
+        let result = s.remove(url: "https://example.com/never-saved")
+        XCTAssertFalse(result.success)
+        XCTAssertEqual(result.removed, 0)
+        XCTAssertNotNil(result.error)
+        XCTAssertTrue(read(inboxFile()).contains("A"), "找不到就不该动任何文件")
+    }
+
+    /// Hand-written prose around an entry has to survive it.
+    func testRemoveLeavesEverythingElseByteForByte() throws {
+        let file = root.appendingPathComponent("Bookmark/03-Areas/手写.md")
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let before = """
+        ---
+        type: notes
+        ---
+
+        # 我自己写的标题
+
+        一段说明文字，不该被碰。
+
+        - 要删的
+          - url: https://example.com/x
+          - summary: 摘要
+
+        - 保留的
+          - url: https://example.com/y
+
+        末尾还有一段手写的话。
+        """
+        try before.write(to: file, atomically: true, encoding: .utf8)
+
+        _ = try store().remove(url: "https://example.com/x")
+
+        let after = read("Bookmark/03-Areas/手写.md")
+        for kept in ["type: notes", "# 我自己写的标题", "一段说明文字，不该被碰。",
+                     "- 保留的", "末尾还有一段手写的话。"] {
+            XCTAssertTrue(after.contains(kept), "不该丢：\(kept)")
+        }
+        XCTAssertFalse(after.contains("要删的"))
+        XCTAssertFalse(after.contains("摘要"))
+    }
+
     func testSecondSaveOfSameURLIsReportedAsDuplicate() throws {
         let s = try store()
         _ = s.save([VaultLink(title: "A", url: "https://example.com/dup")])

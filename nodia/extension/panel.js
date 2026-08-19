@@ -215,7 +215,8 @@ function nodiaPanelChooseKind({ title, existsIn, defaultKind }) {
 
 /**
  * Stage 1, alternate — the link is already in the vault. Shows what it says
- * today and offers to describe it again. Resolves "regenerate" or null.
+ * today and offers to describe it again, or to take it out.
+ * Resolves "regenerate", "remove", or null.
  *
  * Two things make a stored summary go stale: it was saved before summarizing
  * existed at all, or the page has been rewritten since. Both are invisible
@@ -276,11 +277,72 @@ function nodiaPanelExisting({ title, existsIn, kindLabel, summary, keywords, sum
       label: summary ? "重新生成摘要" : "生成摘要",
       onClick: () => finish("regenerate"),
     });
+    // No keyboard shortcut, and not the default button. Removing is the only
+    // thing here that destroys something, and the two actions sit side by side
+    // — ⏎ has to keep meaning the harmless one.
+    nodiaPanelButton(root, { className: "ghost", label: "移除", onClick: () => finish("remove") });
     nodiaPanelButton(root, { className: "ghost", label: "关闭", onClick: () => finish(null) });
 
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); return finish(null); }
       if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); return finish("regenerate"); }
+    };
+    document.addEventListener("keydown", onKey, true);
+  });
+}
+
+/**
+ * Stage 2 of removing — the last thing between a click and a deleted block of
+ * somebody's Markdown. Resolves true to go ahead, null to back out.
+ *
+ * It repeats what is about to go rather than asking "are you sure": the useful
+ * question is not whether you meant to click, it's whether *this* is the entry
+ * you had in mind. The title and the file answer that; "are you sure" doesn't.
+ */
+function nodiaPanelConfirmRemove({ title, existsIn, kindLabel, summary }) {
+  const { host, root } = nodiaPanelMount(`
+    <div class="title"></div>
+    <div class="meta"></div>
+    <div class="label">将从收藏库删除</div>
+    <div class="prev"></div>
+    <div class="hint">这一步没有撤销 · <kbd>esc</kbd> 取消</div>
+  `);
+  root.querySelector(".title").textContent = title || "(无标题)";
+
+  const meta = root.querySelector(".meta");
+  meta.innerHTML = `<b></b> · <span class="file"></span>`;
+  meta.querySelector("b").textContent = kindLabel || "收藏";
+  meta.querySelector(".file").textContent = existsIn || "收藏库";
+
+  const prev = root.querySelector(".prev");
+  if (summary) {
+    prev.textContent = summary;
+  } else {
+    prev.classList.add("empty");
+    prev.textContent = "这条没有摘要。";
+  }
+
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("keydown", onKey, true);
+      if (!result) {
+        host.remove();
+        delete window.__nodiaPanel;
+      }
+      resolve(result);
+    };
+
+    nodiaPanelButton(root, { className: "save", label: "确认移除", onClick: () => finish(true) });
+    nodiaPanelButton(root, { className: "ghost", label: "取消", onClick: () => finish(null) });
+
+    // esc cancels; ⏎ deliberately does nothing. Reaching this panel means a
+    // click, and the confirmation is worth nothing if the same key that
+    // regenerated a summary one screen ago now deletes the entry.
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(null); }
     };
     document.addEventListener("keydown", onKey, true);
   });

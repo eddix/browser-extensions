@@ -160,9 +160,25 @@ public struct VaultAPI: Sendable {
             )
             completion(result.success ? .ok(result) : .error(404, result.error ?? "update failed"))
 
+        case ("POST", "/api/remove"):
+            // Deleting is the one thing here with no undo, so the panel has
+            // already shown you the entry and asked. This endpoint takes a URL
+            // and nothing else: what gets deleted is decided by what was saved,
+            // not by anything the page could put in the request.
+            guard let target = try? JSONDecoder().decode(RemoveRequest.self, from: request.body),
+                  !TextClean.strip(target.url).isEmpty else {
+                return completion(.error(400, "invalid payload"))
+            }
+            let removal = store.remove(url: target.url)
+            completion(removal.success ? .ok(removal) : .error(404, removal.error ?? "remove failed"))
+
         default:
             completion(.error(404, "not found"))
         }
+    }
+
+    private struct RemoveRequest: Decodable {
+        let url: String
     }
 
     private struct SummaryPatch: Decodable {

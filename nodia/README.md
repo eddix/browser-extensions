@@ -91,6 +91,29 @@ other byte of the file — other entries, frontmatter, notes you added by hand �
 is carried through untouched, and a regeneration that comes back empty offers
 no way to overwrite a good summary with nothing.
 
+### Removing
+
+The same panel takes a link back out. It shows which entry is about to go —
+title, kind, file, current summary — and asks once; there is no undo, and the
+useful question is not whether you meant to click but whether *this* is the
+entry you had in mind.
+
+The whole block goes: the title bullet and every field under it, plus the blank
+line that followed, so the file doesn't slowly fill with the gaps where entries
+used to be. Everything else is carried through untouched, same as
+re-summarizing.
+
+Every copy goes, not only the one the index points at. The index remembers the
+first place a URL was seen, so a link that ended up in two files — you moved an
+entry by hand, or filed the same page twice — would lose one copy and keep the
+other, and the toolbar icon, which only asks whether the URL is in the vault,
+would stay green. A removal that leaves the thing looking un-removed is worse
+than none.
+
+A todo can be removed, but removing is not completing. Completing a todo means
+ticking `- [ ]` in Obsidian, where the rest of your task list lives; this only
+handles the case where the entry shouldn't have been there at all.
+
 Asking for the kind *before* doing the work is what keeps the common case
 fast: the kind decides whether a model is called at all.
 
@@ -328,7 +351,7 @@ See [DESIGN.md](./DESIGN.md) for the tab-parsing details.
 ```sh
 swift run nodia              # run from source
 swift run nodia-probe        # headless check: tabs, favicons, vault index
-swift test                   # 208 tests, incl. HTTP boundary + summary routing
+swift test                   # 223 tests, incl. HTTP boundary + summary routing
 python3 tools/scrub-check.py           # 工作区
 python3 tools/scrub-check.py --history # 外加这次推送会新增的提交
 ```

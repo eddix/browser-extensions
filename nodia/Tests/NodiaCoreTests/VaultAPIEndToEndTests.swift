@@ -309,4 +309,53 @@ final class VaultAPIEndToEndTests: XCTestCase {
         XCTAssertTrue(todayInboxText().isEmpty)
     }
 
+    // MARK: - Removing
+
+    func testRemoveDeletesTheEntryAndReportsWhere() throws {
+        _ = try send("/api/links", method: "POST", body: try JSONSerialization.data(
+            withJSONObject: [["title": "要删的", "url": "https://example.com/gone",
+                              "kind": "readlater"]]))
+        XCTAssertNotNil(store.entry(for: "https://example.com/gone"))
+
+        let (status, body) = try send(
+            "/api/remove", method: "POST",
+            body: try JSONSerialization.data(withJSONObject: ["url": "https://example.com/gone"])
+        )
+        XCTAssertEqual(status, 200)
+        XCTAssertTrue(body.contains("\"removed\":1"), "实际回包：\(body)")
+        XCTAssertNil(store.entry(for: "https://example.com/gone"))
+    }
+
+    /// The one endpoint that destroys data must not be reachable without the
+    /// token — and it must fail *before* touching anything.
+    func testRemoveNeedsTheToken() throws {
+        _ = try send("/api/links", method: "POST", body: try JSONSerialization.data(
+            withJSONObject: [["title": "A", "url": "https://example.com/keep",
+                              "kind": "bookmark"]]))
+
+        let (status, _) = try send(
+            "/api/remove", method: "POST",
+            body: try JSONSerialization.data(withJSONObject: ["url": "https://example.com/keep"]),
+            token: "wrong-token"
+        )
+        XCTAssertEqual(status, 401)
+        XCTAssertNotNil(store.entry(for: "https://example.com/keep"), "鉴权失败不该删掉任何东西")
+    }
+
+    func testRemovingSomethingNotSavedIs404() throws {
+        let (status, _) = try send(
+            "/api/remove", method: "POST",
+            body: try JSONSerialization.data(withJSONObject: ["url": "https://example.com/nope"])
+        )
+        XCTAssertEqual(status, 404)
+    }
+
+    func testRemoveRejectsAnEmptyURL() throws {
+        let (status, _) = try send(
+            "/api/remove", method: "POST",
+            body: try JSONSerialization.data(withJSONObject: ["url": "   "])
+        )
+        XCTAssertEqual(status, 400)
+    }
+
 }

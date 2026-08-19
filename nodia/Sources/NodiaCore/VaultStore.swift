@@ -63,6 +63,17 @@ public final class VaultStore: @unchecked Sendable {
         public let error: String?
     }
 
+    public struct RemoveResult: Codable, Sendable {
+        public let success: Bool
+        /// How many entries went, which is not always one: the same link can
+        /// have been filed twice, and removing half of it leaves the toolbar
+        /// icon green and the removal looking like it failed.
+        public let removed: Int
+        /// Every file that changed, so the panel can say where.
+        public let files: [String]
+        public let error: String?
+    }
+
     public enum VaultError: LocalizedError {
         case notADirectory(String)
 
@@ -488,6 +499,123 @@ public final class VaultStore: @unchecked Sendable {
         }
     }
 
+    /// Deletes every entry for a URL, wherever it was filed.
+    ///
+    /// The whole block goes — the title bullet and the indented fields under
+    /// it — because what you asked for is that the link stop being in the
+    /// vault, and a tombstone left behind still turns up when you go looking
+    /// through the files by hand.
+    ///
+    /// Every file is scanned rather than just the one the index points at. The
+    /// index keeps the *first* place a URL was seen, so a link filed twice
+    /// would lose one copy and keep the other — and the extension's icon,
+    /// which only asks "is this in the vault", would still be green. A removal
+    /// that leaves the thing looking un-removed is worse than no removal.
+    ///
+    /// Nothing else in the file is touched: other entries, frontmatter, notes
+    /// you wrote by hand. This is editing a file you own.
+    public func remove(url: String) -> RemoveResult {
+        queue.sync {
+            let key = Self.normalize(url)
+            guard let walker = FileManager.default.enumerator(
+                at: bookmarkDir,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                return RemoveResult(success: false, removed: 0, files: [],
+                                    error: "收藏库不可读")
+            }
+
+            var removed = 0
+            var touched: [String] = []
+            for case let file as URL in walker where file.pathExtension == "md" {
+                guard let text = try? String(contentsOf: file, encoding: .utf8),
+                      let (rewritten, count) = Self.removingEntries(in: text, url: key),
+                      count > 0 else { continue }
+                do {
+                    try rewritten.write(to: file, atomically: true, encoding: .utf8)
+                    removed += count
+                    touched.append(relativePath(file))
+                } catch {
+                    return RemoveResult(success: false, removed: removed, files: touched,
+                                        error: error.localizedDescription)
+                }
+            }
+
+            guard removed > 0 else {
+                return RemoveResult(success: false, removed: 0, files: [],
+                                    error: "收藏库里没有这个链接")
+            }
+            // Same reason as `save`: our own write must not read back as a
+            // foreign change and cost the next reader a full re-parse.
+            rebuildIndexLocked(snapshot: diskSnapshot())
+            Log.write("vault: removed \(removed) entr\(removed == 1 ? "y" : "ies") for \(key)")
+            return RemoveResult(success: true, removed: removed, files: touched, error: nil)
+        }
+    }
+
+    /// Drops every block for `key` from `text`, or nil if there were none.
+    ///
+    /// Returns the count as well, because "removed" and "removed one of the
+    /// two" are different answers and the caller reports the number.
+    static func removingEntries(in text: String, url key: String) -> (String, Int)? {
+        var lines = text.components(separatedBy: "\n")
+        var blocks: [(Int, Int)] = []       // half-open ranges, in file order
+
+        var start: Int?
+        var isMatch = false
+        func close(at end: Int) {
+            if let s = start, isMatch { blocks.append((s, end)) }
+            start = nil
+            isMatch = false
+        }
+
+        for (i, line) in lines.enumerated() {
+            if Self.isTitleBullet(line) {
+                close(at: i)
+                start = i
+                continue
+            }
+            guard start != nil, Self.fieldName(line) == "url" else { continue }
+            let clean = TextClean.removeInvisible(line).trimmingCharacters(in: .whitespaces)
+            guard let colon = clean.firstIndex(of: ":") else { continue }
+            let value = String(clean[clean.index(after: colon)...])
+                .trimmingCharacters(in: .whitespaces)
+            if Self.normalize(value) == key { isMatch = true }
+        }
+        close(at: lines.count)
+        guard !blocks.isEmpty else { return nil }
+
+        // Back to front, so the earlier ranges still describe the same lines.
+        for (s, e) in blocks.reversed() {
+            // Take the blank lines that followed the entry with it. Leaving
+            // them behind stacks up gaps where entries used to be, and the file
+            // slowly becomes a record of what was deleted.
+            var end = e
+            while end < lines.count, lines[end].trimmingCharacters(in: .whitespaces).isEmpty {
+                end += 1
+            }
+            lines.removeSubrange(s..<end)
+        }
+        return (lines.joined(separator: "\n"), blocks.count)
+    }
+
+    /// A top-level `- …` line: the start of an entry.
+    static func isTitleBullet(_ line: String) -> Bool {
+        let clean = TextClean.removeInvisible(line)
+        return !clean.hasPrefix(" ") && !clean.hasPrefix("\t")
+            && clean.trimmingCharacters(in: .whitespaces).hasPrefix("- ")
+    }
+
+    /// The `key:` of an indented `  - key: value` line, else nil.
+    static func fieldName(_ line: String) -> String? {
+        let clean = TextClean.removeInvisible(line)
+        guard clean.hasPrefix(" ") || clean.hasPrefix("\t") else { return nil }
+        let trimmed = clean.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("- "), let colon = trimmed.firstIndex(of: ":") else { return nil }
+        return String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<colon])
+    }
+
     /// Rewrites one entry's `keywords`/`summary` lines in `text`, or nil if no
     /// entry with that URL is in this file.
     ///
@@ -500,27 +628,13 @@ public final class VaultStore: @unchecked Sendable {
     ) -> String? {
         var lines = text.components(separatedBy: "\n")
 
-        func isTitleBullet(_ line: String) -> Bool {
-            let clean = TextClean.removeInvisible(line)
-            return !clean.hasPrefix(" ") && !clean.hasPrefix("\t")
-                && clean.trimmingCharacters(in: .whitespaces).hasPrefix("- ")
-        }
-        /// The `key:` of an indented `  - key: value` line, else nil.
-        func fieldName(_ line: String) -> String? {
-            let clean = TextClean.removeInvisible(line)
-            guard clean.hasPrefix(" ") || clean.hasPrefix("\t") else { return nil }
-            let trimmed = clean.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("- "), let colon = trimmed.firstIndex(of: ":") else { return nil }
-            return String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<colon])
-        }
-
         // Locate the block: scan for the url line, remembering the title bullet
         // above it.
         var blockStart: Int?
         var current: Int?
         for (i, line) in lines.enumerated() {
-            if isTitleBullet(line) { current = i; continue }
-            guard fieldName(line) == "url", let start = current else { continue }
+            if Self.isTitleBullet(line) { current = i; continue }
+            guard Self.fieldName(line) == "url", let start = current else { continue }
             let clean = TextClean.removeInvisible(line).trimmingCharacters(in: .whitespaces)
             guard let colon = clean.firstIndex(of: ":") else { continue }
             let value = String(clean[clean.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
@@ -529,7 +643,7 @@ public final class VaultStore: @unchecked Sendable {
         guard let start = blockStart else { return nil }
 
         var end = lines.count
-        for i in (start + 1)..<lines.count where isTitleBullet(lines[i]) {
+        for i in (start + 1)..<lines.count where Self.isTitleBullet(lines[i]) {
             end = i
             break
         }
@@ -539,7 +653,7 @@ public final class VaultStore: @unchecked Sendable {
         var kept: [String] = []
         var lastField = -1
         for i in start..<end {
-            guard let name = fieldName(lines[i]) else { kept.append(lines[i]); continue }
+            guard let name = Self.fieldName(lines[i]) else { kept.append(lines[i]); continue }
             if name == "url" {
                 indent = String(lines[i].prefix(while: { $0 == " " || $0 == "\t" }))
             }

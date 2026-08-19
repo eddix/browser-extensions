@@ -329,6 +329,42 @@ async function reviewAndSave() {
  * stable URL, so the stored text and the live page drift apart silently. This
  * shows both and only replaces the old one once you've seen the new one.
  */
+/**
+ * Takes a saved link back out of the vault, after showing which one.
+ *
+ * Every copy goes, not just the one the index points at: the same URL can sit
+ * in two files if you moved an entry by hand, and removing one of them would
+ * leave the toolbar icon green — a removal that looks like it didn't work.
+ * The backend decides that; this only reports the number it comes back with.
+ */
+async function removeLink(tab, existing) {
+  const go = await inPage(tab.id, (p) => nodiaPanelConfirmRemove(p), [{
+    title: existing.title || tab.title || '',
+    existsIn: existing.exists_in || '',
+    kindLabel: KIND_LABEL[existing.kind] || '收藏',
+    summary: existing.summary || '',
+  }]);
+  if (!go) return;
+
+  await inPage(tab.id, (t) => nodiaPanelBusy(t), ['正在移除…']);
+  try {
+    const result = await api('/api/remove', {
+      method: 'POST',
+      body: JSON.stringify({ url: tab.url }),
+    });
+    await inPage(tab.id, () => nodiaPanelClose());
+    const where = (result.files || []).join('、');
+    const count = result.removed || 0;
+    // The count only earns a mention when it isn't one: two means the link had
+    // been filed twice, which is worth knowing and easy to miss.
+    showSuccess(count > 1 ? `已移除 ${count} 处：${where}` : `已从 ${where} 移除`);
+    setIcon('unsaved');
+  } catch (error) {
+    await inPage(tab.id, () => nodiaPanelClose()).catch(() => {});
+    showError(error.message || '移除失败');
+  }
+}
+
 async function regenerateSummary(tab, existing) {
   const choice = await inPage(tab.id, (p) => nodiaPanelExisting(p), [{
     title: existing.title || tab.title || '',
@@ -339,6 +375,7 @@ async function regenerateSummary(tab, existing) {
     // ISO timestamp — the date is the part that answers "is this stale?".
     summaryAt: (existing.summary_at || '').slice(0, 10),
   }]);
+  if (choice === 'remove') return removeLink(tab, existing);
   if (choice !== 'regenerate') return;
 
   await inPage(tab.id, (t) => nodiaPanelBusy(t), ['正在抓取正文…']);
