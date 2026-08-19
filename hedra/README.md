@@ -60,3 +60,13 @@ enable Developer mode → *Load unpacked* → pick this `hedra/` directory.
 | `manifest.json` | MV3 manifest |
 | `popup.html` / `popup.js` | the entire UI + rule compiler + conflict detection |
 | `background.js` | ~10 lines: restore the badge after browser restart |
+
+## 图标
+
+`icons/icon.svg` 是源，同目录的 PNG 是产物；改了 SVG 跑仓库根目录的
+`tools/render-icons.sh` 重新生成。Chrome 的图标只吃位图，所以两份都得在仓库里。
+图形是 [Phosphor Icons](https://phosphoricons.com) 的 `faders`，duotone 字重（MIT）。
+
+它在方块里画到 88/128，而 nodia 的 archive 是 72/128 —— 同一个数字不等于同样的大小：
+faders 是六条细笔画，archive 是两条粗的，几何尺寸对齐时细的那个在 16px 先糊掉，
+而 16px 正是工具栏里的实际尺寸。

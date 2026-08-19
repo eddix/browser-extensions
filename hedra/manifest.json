@@ -3,13 +3,28 @@
   "name": "hedra",
   "version": "1.0.0",
   "description": "按域名添加、修改、删除请求/响应 HTTP header。零遥测，配置只存本地。",
-  "permissions": ["declarativeNetRequestWithHostAccess", "storage"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "declarativeNetRequestWithHostAccess",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "hedra"
+    "default_title": "hedra",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   }
 }

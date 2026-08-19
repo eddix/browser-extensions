@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- hedra — per-domain header rules, set and left alone.
+       Glyph: Phosphor Icons, duotone weight (MIT). https://phosphoricons.com
+       The 256-unit glyph is nested and scaled so its own coordinates stay
+       untouched: swapping in another Phosphor icon means pasting its two paths
+       and nothing else. The duotone layer is lifted from Phosphor's 0.2 to 0.32
+       because it is white on a saturated ground here rather than dark on white,
+       and at 16px the lighter value disappeared into the background.
+
+       Drawn at 88 of 128 where nodia's archive sits at 72. Same number would
+       not mean same size: faders is six thin strokes and archive is two thick
+       ones, so at matching geometry the sliders lost to the background first —
+       at 16px, which is the size it is actually used at. -->
+  <rect width="128" height="128" rx="28" fill="#3B4252"/>
+  <g fill="#FFFFFF" transform="translate(20 20) scale(0.34375)"><path d="M200,40V216H56V40Z" opacity="0.32"/><path d="M136,120v96a8,8,0,0,1-16,0V120a8,8,0,0,1,16,0Zm64,72a8,8,0,0,0-8,8v16a8,8,0,0,0,16,0V200A8,8,0,0,0,200,192Zm24-32H208V40a8,8,0,0,0-16,0V160H176a8,8,0,0,0,0,16h48a8,8,0,0,0,0-16ZM56,160a8,8,0,0,0-8,8v48a8,8,0,0,0,16,0V168A8,8,0,0,0,56,160Zm24-32H64V40a8,8,0,0,0-16,0v88H32a8,8,0,0,0,0,16H80a8,8,0,0,0,0-16Zm72-48H136V40a8,8,0,0,0-16,0V80H104a8,8,0,0,0,0,16h48a8,8,0,0,0,0-16Z"/></g>
+</svg>

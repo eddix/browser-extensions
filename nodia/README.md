@@ -346,6 +346,13 @@ python3 tools/scrub-check.py --history # 外加这次推送会新增的提交
 **这台机器上还装了 `.git/hooks/pre-push`**，推送前自动跑 `--history`。它不在仓库里，
 重新克隆之后不会跟过来 —— 想要的话照 `tools/scrub-check.py` 的文件头自己建一个。
 
+### 图标
+
+`extension/icons/*.svg` 是源，同目录的 PNG 是产物。改了 SVG 之后跑仓库根目录的
+`tools/render-icons.sh` 重新生成 —— Chrome 的 `manifest.icons` 和 `chrome.action.setIcon`
+只吃位图，所以同一张图得存两份，一份能改、一份浏览器认。图形取自
+[Phosphor Icons](https://phosphoricons.com) 的 duotone 字重（MIT）。
+
 ## Install as an app
 
 ```sh
