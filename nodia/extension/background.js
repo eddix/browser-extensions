@@ -23,6 +23,15 @@ async function getConfig() {
 }
 
 async function api(path, { method = 'GET', body } = {}) {
+  // Serializing happens here, so a caller that also serializes sends a JSON
+  // *string* where the endpoint expects an object — which decodes as neither
+  // and comes back as a bare 400 from the far side, with nothing in the log to
+  // say why. That is exactly how removal shipped broken. Accepting a string
+  // here instead would leave both spellings working and neither obviously
+  // right; this refuses at the call site.
+  if (typeof body === 'string') {
+    throw new Error('api() 会自己序列化 body — 传对象，别传 JSON 字符串');
+  }
   const { apiBase, token } = await getConfig();
   const response = await fetch(`${apiBase}${path}`, {
     method,
@@ -350,7 +359,7 @@ async function removeLink(tab, existing) {
   try {
     const result = await api('/api/remove', {
       method: 'POST',
-      body: JSON.stringify({ url: tab.url }),
+      body: { url: tab.url },
     });
     await inPage(tab.id, () => nodiaPanelClose());
     const where = (result.files || []).join('、');

@@ -342,6 +342,35 @@ final class VaultAPIEndToEndTests: XCTestCase {
         XCTAssertNotNil(store.entry(for: "https://example.com/keep"), "鉴权失败不该删掉任何东西")
     }
 
+    /// The exact shape removal shipped with: the caller serialized the payload
+    /// and `api()` serialized it again, so the endpoint received a JSON string
+    /// where it wanted an object. It decodes as neither, which is a 400 with
+    /// nothing logged — the request never reaches the store, so even "was it
+    /// tried?" is unanswerable from the log. Pinned here because the extension
+    /// has no tests of its own, and this is the closest reachable place to the
+    /// mistake.
+    func testDoubleEncodedBodyIsRejectedNotMisread() throws {
+        _ = try send("/api/links", method: "POST", body: try JSONSerialization.data(
+            withJSONObject: [["title": "别删我", "url": "https://example.com/twice-encoded",
+                              "kind": "bookmark"]]))
+
+        let once = try JSONSerialization.data(withJSONObject: ["url": "https://example.com/twice-encoded"])
+        let twice = try JSONSerialization.data(
+            withJSONObject: String(decoding: once, as: UTF8.self),
+            options: .fragmentsAllowed
+        )
+
+        let (status, _) = try send("/api/remove", method: "POST", body: twice)
+        XCTAssertEqual(status, 400, "双重序列化的 body 应当是 400")
+        XCTAssertNotNil(store.entry(for: "https://example.com/twice-encoded"),
+                        "解不开的请求不该删掉任何东西")
+
+        // And the shape the fix sends does work, on the same entry.
+        let (ok, _) = try send("/api/remove", method: "POST", body: once)
+        XCTAssertEqual(ok, 200)
+        XCTAssertNil(store.entry(for: "https://example.com/twice-encoded"))
+    }
+
     func testRemovingSomethingNotSavedIs404() throws {
         let (status, _) = try send(
             "/api/remove", method: "POST",
