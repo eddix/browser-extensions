@@ -1,16 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <!-- hedra — per-domain header rules, set and left alone.
-       Glyph: Phosphor Icons, duotone weight (MIT). https://phosphoricons.com
-       The 256-unit glyph is nested and scaled so its own coordinates stay
-       untouched: swapping in another Phosphor icon means pasting its two paths
-       and nothing else. The duotone layer is lifted from Phosphor's 0.2 to 0.32
-       because it is white on a saturated ground here rather than dark on white,
-       and at 16px the lighter value disappeared into the background.
+       Faders, in the spirit of Phosphor's duotone set (https://phosphoricons.com)
+       but redrawn rather than pasted. Phosphor's own `faders` is three tracks
+       and three handles, and at 16px that is six strokes about a pixel wide
+       each: it rendered as noise, unreadable at the one size the toolbar
+       actually uses. Two tracks and two offset handles survive the pixel grid
+       and still say "sliders". The duotone split is kept — tracks at 0.32,
+       handles solid — so the pair still reads as one family with nodia.
 
-       Drawn at 88 of 128 where nodia's archive sits at 72. Same number would
-       not mean same size: faders is six thin strokes and archive is two thick
-       ones, so at matching geometry the sliders lost to the background first —
-       at 16px, which is the size it is actually used at. -->
-  <rect width="128" height="128" rx="28" fill="#3B4252"/>
-  <g fill="#FFFFFF" transform="translate(20 20) scale(0.34375)"><path d="M200,40V216H56V40Z" opacity="0.32"/><path d="M136,120v96a8,8,0,0,1-16,0V120a8,8,0,0,1,16,0Zm64,72a8,8,0,0,0-8,8v16a8,8,0,0,0,16,0V200A8,8,0,0,0,200,192Zm24-32H208V40a8,8,0,0,0-16,0V160H176a8,8,0,0,0,0,16h48a8,8,0,0,0,0-16ZM56,160a8,8,0,0,0-8,8v48a8,8,0,0,0,16,0V168A8,8,0,0,0,56,160Zm24-32H64V40a8,8,0,0,0-16,0v88H32a8,8,0,0,0,0,16H80a8,8,0,0,0,0-16Zm72-48H136V40a8,8,0,0,0-16,0V80H104a8,8,0,0,0,0,16h48a8,8,0,0,0,0-16Z"/></g>
+       Coordinates are in Phosphor's 256-unit space and scaled by 0.390625 for
+       the 100-of-128 box, so the glyph can be swapped for a real Phosphor path
+       without touching anything around it. -->
+  <rect width="128" height="128" rx="20" fill="#3B4252"/>
+  <g fill="#FFFFFF" transform="translate(14 14) scale(0.390625)"><g opacity="0.32"><rect x="78" y="28" width="18" height="200" rx="9"/><rect x="160" y="28" width="18" height="200" rx="9"/></g><rect x="40" y="72" width="94" height="34" rx="17"/><rect x="122" y="150" width="94" height="34" rx="17"/></g>
 </svg>

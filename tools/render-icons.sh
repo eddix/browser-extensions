@@ -15,6 +15,12 @@
 # Headless Chrome does the rasterising because it is the one renderer this
 # machine is guaranteed to have — the extensions run in it. No rsvg, no
 # ImageMagick, no npm install.
+#
+# Each size goes through a generated HTML wrapper that draws the SVG at exactly
+# that many CSS pixels. Pointing Chrome at the .svg directly and shrinking
+# `--window-size` does *not* scale it: the SVG declares its own width, so a
+# 16x16 window simply captures the top-left corner of a 128px drawing, and the
+# icons came out as an arc of the rounded corner with nothing else in them.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -26,37 +32,50 @@ if [ ! -x "$CHROME" ]; then
   exit 1
 fi
 
-# Served over http rather than opened as file://, because a file:// page cannot
-# fetch its own siblings and the renderer needs the SVG to resolve.
+# Wrappers live under the repository so the same server can serve both them and
+# the SVGs they point at; the directory is ignored and removed on the way out.
+WORK="$ROOT/.icon-render"
+rm -rf "$WORK" && mkdir -p "$WORK"
 PORT=8975
+# Served over http rather than opened as file://, because a file:// page is not
+# allowed to load the SVG sitting next to it.
 (cd "$ROOT" && exec python3 -m http.server "$PORT" --bind 127.0.0.1) >/dev/null 2>&1 &
 SERVER=$!
-trap 'kill "$SERVER" 2>/dev/null || true' EXIT INT TERM
+trap 'kill "$SERVER" 2>/dev/null || true; rm -rf "$WORK"' EXIT INT TERM
 
-# Wait for it rather than sleeping a guessed amount.
 for _ in $(seq 1 50); do
   curl -sf -o /dev/null "http://127.0.0.1:$PORT/" && break
   sleep 0.1
 done
 
-count=0
-find "$ROOT" -path '*/icons/*.svg' -not -path '*/node_modules/*' | while read -r svg; do
+find "$ROOT" -path '*/icons/*.svg' -not -path '*/node_modules/*' | sort | while read -r svg; do
   dir=$(dirname "$svg")
   base=$(basename "$svg" .svg)          # icon | icon-green | icon-red
   suffix=${base#icon}                   # "" | -green | -red
   rel=${svg#"$ROOT"/}
 
   for size in 16 48 128; do
+    name="$(echo "$rel" | tr / _)-$size.html"
+    page="$WORK/$name"
+    # margin:0 and a matching body size, so the drawing starts at the very
+    # first pixel and the window has nothing else in it to capture.
+    cat > "$page" <<HTML
+<!doctype html><meta charset="utf-8">
+<style>
+  html,body{margin:0;padding:0;width:${size}px;height:${size}px;background:transparent}
+  img{display:block;width:${size}px;height:${size}px}
+</style>
+<img src="/$rel">
+HTML
     out="$dir/icon$size$suffix.png"
     "$CHROME" --headless --disable-gpu --hide-scrollbars --no-first-run \
       --default-background-color=00000000 \
       --window-size="$size,$size" \
       --screenshot="$out" \
-      "http://127.0.0.1:$PORT/$rel" >/dev/null 2>&1
+      "http://127.0.0.1:$PORT/.icon-render/$name" >/dev/null 2>&1
     [ -s "$out" ] || { echo "渲染失败：$out" >&2; exit 1; }
   done
   echo "  $rel → icon{16,48,128}$suffix.png"
-  count=$((count + 1))
 done
 
 echo "完成。PNG 是生成物，别手改——改 SVG 再跑一次。"

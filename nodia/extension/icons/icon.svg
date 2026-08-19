@@ -1,11 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <!-- nodia — the page is filed into the vault.
        Glyph: Phosphor Icons, duotone weight (MIT). https://phosphoricons.com
-       The 256-unit glyph is nested at 0.28125 so its own coordinates stay
+       The 256-unit glyph is nested at 0.390625 so its own coordinates stay
        untouched: swapping in another Phosphor icon means pasting its two paths
        and nothing else. The duotone layer is lifted from Phosphor's 0.2 to
        0.32 because it is white on a saturated ground here rather than dark on
-       white, and at 16px the lighter value disappeared into the background. -->
-  <rect width="128" height="128" rx="28" fill="#43539B"/>
-  <g fill="#FFFFFF" transform="translate(28 28) scale(0.28125)"><path d="M216,96v96a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V96Z" opacity="0.32"/><path d="M224,48H32A16,16,0,0,0,16,64V88a16,16,0,0,0,16,16v88a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48ZM208,192H48V104H208ZM224,88H32V64H224V88ZM96,136a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,136Z"/></g>
+       white, and at 16px the lighter value disappeared into the background.
+
+       Drawn at 100 of 128, which is larger than it looks right at 128px. The
+       size that matters is 16, where the tile eats most of the pixels: at 72
+       the archive had 9px of glyph and its lid merged into its body, and the
+       whole thing read as a smudge. Judge any change to this number by
+       rendering it and looking at icon16.png, not at icon128.png. -->
+  <rect width="128" height="128" rx="20" fill="#43539B"/>
+  <g fill="#FFFFFF" transform="translate(14 14) scale(0.390625)"><path d="M216,96v96a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V96Z" opacity="0.32"/><path d="M224,48H32A16,16,0,0,0,16,64V88a16,16,0,0,0,16,16v88a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48ZM208,192H48V104H208ZM224,88H32V64H224V88ZM96,136a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,136Z"/></g>
 </svg>

@@ -19,3 +19,4 @@ log/
 # Icon intermediates (regenerable via nodia/icon/make-icon.swift)
 nodia/icon/preview/
 *.iconset/
+.icon-render/
