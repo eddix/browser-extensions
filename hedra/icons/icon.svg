@@ -1,16 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <!-- hedra — per-domain header rules, set and left alone.
-       Faders, in the spirit of Phosphor's duotone set (https://phosphoricons.com)
-       but redrawn rather than pasted. Phosphor's own `faders` is three tracks
-       and three handles, and at 16px that is six strokes about a pixel wide
-       each: it rendered as noise, unreadable at the one size the toolbar
-       actually uses. Two tracks and two offset handles survive the pixel grid
-       and still say "sliders". The duotone split is kept — tracks at 0.32,
-       handles solid — so the pair still reads as one family with nodia.
+       Two faders, drawn here rather than taken from a set. Phosphor's own
+       `faders` is three tracks and three handles, which at 16px is six strokes
+       about a pixel wide each and renders as noise — unreadable at the one
+       size the toolbar actually uses. Two tracks and two offset handles
+       survive the pixel grid and still say "sliders".
 
-       Coordinates are in Phosphor's 256-unit space and scaled by 0.390625 for
-       the 100-of-128 box, so the glyph can be swapped for a real Phosphor path
-       without touching anything around it. -->
-  <rect width="128" height="128" rx="20" fill="#3B4252"/>
-  <g fill="#FFFFFF" transform="translate(14 14) scale(0.390625)"><g opacity="0.32"><rect x="78" y="28" width="18" height="200" rx="9"/><rect x="160" y="28" width="18" height="200" rx="9"/></g><rect x="40" y="72" width="94" height="34" rx="17"/><rect x="122" y="150" width="94" height="34" rx="17"/></g>
+       Single colour, no duotone second layer, unlike nodia. On a transparent
+       background `opacity` is not a lighter shade, it is a blend with whatever
+       is behind: the same 0.38 track vanished into a white toolbar and again
+       into a dark one. Track and handle are told apart by weight instead,
+       which costs nothing at any size.
+
+       Tracks run the full height. The 4 units of slack left and right are the
+       handles' overhang, not padding, and the glyph is centred on it.
+
+       Colour is checked by tools/icon-contrast.py against both toolbars. -->
+  <g transform="scale(0.5)"><g fill="#78808F"><rect x="47" y="0" width="34" height="256" rx="17"/><rect x="175" y="0" width="34" height="256" rx="17"/><rect x="8" y="52" width="112" height="60" rx="30"/><rect x="136" y="148" width="112" height="60" rx="30"/></g></g>
 </svg>

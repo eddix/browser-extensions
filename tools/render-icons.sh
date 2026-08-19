@@ -32,6 +32,11 @@ if [ ! -x "$CHROME" ]; then
   exit 1
 fi
 
+# Colours are checked before anything is rasterised, so a colour that fails is
+# caught while the SVG is still the only thing that changed. Rendering first
+# would leave twelve committed PNGs carrying the bad value.
+python3 "$ROOT/tools/icon-contrast.py"
+
 # Wrappers live under the repository so the same server can serve both them and
 # the SVGs they point at; the directory is ignored and removed on the way out.
 WORK="$ROOT/.icon-render"

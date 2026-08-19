@@ -374,7 +374,14 @@ python3 tools/scrub-check.py --history # 外加这次推送会新增的提交
 `extension/icons/*.svg` 是源，同目录的 PNG 是产物。改了 SVG 之后跑仓库根目录的
 `tools/render-icons.sh` 重新生成 —— Chrome 的 `manifest.icons` 和 `chrome.action.setIcon`
 只吃位图，所以同一张图得存两份，一份能改、一份浏览器认。图形取自
-[Phosphor Icons](https://phosphoricons.com) 的 duotone 字重（MIT）。
+[Phosphor Icons](https://phosphoricons.com) 的 `archive`，duotone 字重（MIT）。
+
+三个状态（未存 / 已存 / 出错）上色在 duotone 的那一层：箱子里那块是蓝 / 绿 / 红，
+外框始终是同一个灰。没有底色方块 —— 工具栏里其它图标都是透明底的线条，一个填满的
+圆角方块摆在那一排里就是最吵的那个。
+
+颜色由 `tools/icon-contrast.py` 守着，对浅色和深色两种工具栏各算一遍。两端夹逼有
+上限（对脚本里那两个参考底色是 3.55:1），调深调浅都过不去。
 
 ## Install as an app
 

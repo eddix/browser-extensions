@@ -65,8 +65,15 @@ enable Developer mode → *Load unpacked* → pick this `hedra/` directory.
 
 `icons/icon.svg` 是源，同目录的 PNG 是产物；改了 SVG 跑仓库根目录的
 `tools/render-icons.sh` 重新生成。Chrome 的图标只吃位图，所以两份都得在仓库里。
-图形是 [Phosphor Icons](https://phosphoricons.com) 的 `faders`，duotone 字重（MIT）。
 
-它在方块里画到 88/128，而 nodia 的 archive 是 72/128 —— 同一个数字不等于同样的大小：
-faders 是六条细笔画，archive 是两条粗的，几何尺寸对齐时细的那个在 16px 先糊掉，
-而 16px 正是工具栏里的实际尺寸。
+图形是两个推子，画在这里而不是从图标集里拿的。[Phosphor Icons](https://phosphoricons.com)
+的 `faders` 是三轨三把手，在 16px 下就是六条约一像素宽的笔画，渲染出来是噪点 ——
+而 16px 正是工具栏里的实际尺寸，也是唯一天天看到的尺寸。
+
+透明底、单色，跟工具栏里其它图标一个路子。没有 duotone 的第二层，这点和 nodia 不同：
+透明底上 `opacity` 不是「更淡的同色」，是和背后的东西混合，同一条 0.38 的轨道在浅色
+工具栏上太淡、在深色上又太暗。轨道和把手改用粗细区分，任何尺寸下都不花钱。
+
+颜色由 `tools/icon-contrast.py` 守着，对浅色和深色两种工具栏各算一遍。两端夹逼是有
+上限的（对脚本里那两个参考底色是 3.55:1），所以「不够清楚就调深」这条路走不通 ——
+要突破只能换参考底色，或者按 `prefers-color-scheme` 出两套图。
