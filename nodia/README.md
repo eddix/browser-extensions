@@ -329,13 +329,22 @@ See [DESIGN.md](./DESIGN.md) for the tab-parsing details.
 swift run nodia              # run from source
 swift run nodia-probe        # headless check: tabs, favicons, vault index
 swift test                   # 208 tests, incl. HTTP boundary + summary routing
-python3 tools/scrub-check.py # 内网标识词闸门，推之前跑
+python3 tools/scrub-check.py           # 工作区
+python3 tools/scrub-check.py --history # 外加这次推送会新增的提交
 ```
 
 这是公开仓库，示例里的域名和平台名都得是通用的。`scrub-check.py` 扫 git 会发布的
-每个文件，命中就打印 `文件:行号` 并以非零退出 —— 词表在脚本里，改动会出现在 diff 里。
-上一次泄漏不是因为没扫，是因为扫描命令每次手打，词表在重写时丢了一项，检查自己
-悄悄退化了。
+一切——文件内容、文件名，以及 `--history` 下待推送提交的新增行、提交信息和作者邮箱
+——命中就打印位置并以非零退出。词表在脚本里，改动会出现在 diff 里；脚本每次运行还
+会先自检一遍词表，确认它仍然命中该命中的、仍然放过 `ecommerce` 这类词。
+
+三次泄漏教出来的三件事：第一次是扫描命令每次手打、词表在重写时丢了一项；第二次是
+扫描只看工作区，而泄漏藏在 tip 干净、中间提交带着旧内容的历史里；第三次是
+`git grep -E` 的 `\b` 在 POSIX ERE 里不是词边界，模式静默匹配不到任何东西。
+每一次检查都在跑，也都在报绿。
+
+**这台机器上还装了 `.git/hooks/pre-push`**，推送前自动跑 `--history`。它不在仓库里，
+重新克隆之后不会跟过来 —— 想要的话照 `tools/scrub-check.py` 的文件头自己建一个。
 
 ## Install as an app
 
