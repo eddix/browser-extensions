@@ -159,8 +159,18 @@ public final class LocalHTTPServer: @unchecked Sendable {
         private var answering = false
         private var idle: DispatchSourceTimer?
 
+        /// When this request must be whole by, no matter how it is paced.
+        ///
+        /// The idle timer alone only catches a peer that stops talking. One that
+        /// sends a byte just inside every window holds the connection open for
+        /// as long as it likes and never trips it — the timer measures silence,
+        /// and there is none. A deadline measures the thing actually worth
+        /// bounding, which is how long we're willing to spend reading.
+        private let deadline: Date
+
         init(conn: NWConnection, queue: DispatchQueue, timeout: TimeInterval) {
             self.conn = conn
+            self.deadline = Date().addingTimeInterval(timeout * 10)
             let timer = DispatchSource.makeTimerSource(queue: queue)
             idle = timer
             timer.setEventHandler { [weak self] in
@@ -176,9 +186,11 @@ public final class LocalHTTPServer: @unchecked Sendable {
             timer.resume()
         }
 
-        /// Bytes arrived, so the peer is alive; give it the full window again.
+        /// Bytes arrived, so the peer is alive; give it the full window again —
+        /// but never past the point where the whole request should have landed.
         func touch(timeout: TimeInterval) {
-            idle?.schedule(deadline: .now() + timeout)
+            let next = min(Date().addingTimeInterval(timeout), deadline)
+            idle?.schedule(deadline: .now() + max(0, next.timeIntervalSinceNow))
         }
 
         /// Called once the request is whole. From here on the connection is
@@ -329,8 +341,19 @@ public final class LocalHTTPServer: @unchecked Sendable {
             headers[String(name)] = value
         }
 
-        let declared = Int(headers["content-length"] ?? "0") ?? 0
-        guard declared >= 0 else { return .malformed }
+        // Absent means no body. Present but unparseable does not: `Int()`
+        // returns nil for `abc` and for anything past 64 bits alike, and
+        // folding both to zero let a request through as "no body" when what it
+        // actually said was something nobody can act on. The client then gets a
+        // 401 for its perfectly good token, because the body it sent was
+        // silently truncated to nothing.
+        let declared: Int
+        switch headers["content-length"] {
+        case nil: declared = 0
+        case let raw?:
+            guard let parsed = Int(raw), parsed >= 0 else { return .malformed }
+            declared = parsed
+        }
         // Judged on the declaration, before a byte of it is read: waiting for
         // 200 MiB to arrive and *then* objecting is how the 427 MB resident
         // measurement happened.

@@ -341,10 +341,10 @@ final class VaultStoreTests: XCTestCase {
             title: "多行摘要", url: "https://example.com/multiline",
             summary: "第一行\n\n第二行"
         )])
-        let inMemory = try XCTUnwrap(s1.entry(for: "https://example.com/multiline")?.summary)
+        let afterSave = try XCTUnwrap(s1.entry(for: "https://example.com/multiline")?.summary)
 
         let fromDisk = try XCTUnwrap(try store().entry(for: "https://example.com/multiline")?.summary)
-        XCTAssertEqual(inMemory, fromDisk)
-        XCTAssertEqual(inMemory, "第一行 第二行")
+        XCTAssertEqual(afterSave, fromDisk)
+        XCTAssertEqual(afterSave, "第一行 第二行")
     }
 }

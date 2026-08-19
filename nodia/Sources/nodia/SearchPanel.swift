@@ -18,7 +18,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     private var panel: KeyPanel?
     private var keyMonitor: Any?
     /// Held so tinting doesn't have to search the view tree for it.
-    private var glassView: NSView?
+    private var glassView: NSGlassEffectView?
 
     init(model: TabListModel, themeStore: ThemeStore, onOpenSettings: @escaping () -> Void) {
         self.model = model
@@ -217,8 +217,8 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     }
 
     private func handleEscape() {
-        // Backing out of a half-filled template returns to search, not out of the
-        // panel — you were mid-task.
+        // Backing out of a half-filled template returns to the list you opened
+        // it from, not out of the panel — you were mid-task.
         if model.filling != nil { model.cancelFilling() }
         else if !model.query.isEmpty { model.query = "" }
         else if model.mode == .duplicates { model.toggleMode() }

@@ -294,6 +294,13 @@ public struct QuickOpenStore: Sendable {
             for param in params.keys where !placeholders.contains(param) {
                 problems.append("\(label) 描述了参数 \(param)，但 url 里没有 {\(param)}")
             }
+            // A template with no parameters is already a finished URL, so it
+            // can be checked now rather than discovered at the moment you press
+            // ⏎ and nothing happens. One with parameters can't: its URL isn't
+            // knowable until the values are.
+            if template.parameters.isEmpty, template.expand([:]) == nil {
+                problems.append("\(label) 的 url 不是一个能打开的地址")
+            }
             templates.append(template)
         }
         return LoadResult(templates: templates, problems: problems)

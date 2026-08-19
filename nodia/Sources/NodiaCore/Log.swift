@@ -13,7 +13,7 @@ public enum Log {
     /// end, then write — is two syscalls with a gap in the middle, and anything
     /// that lands in that gap makes both writers agree on the same offset and
     /// one line overwrite the other. That is not hypothetical for this app:
-    /// HTTP requests are logged from arbitrary connection queues while the
+    /// HTTP requests are logged from the connection queue while the
     /// panel logs from the main thread. A serial queue would have fixed it
     /// within one process only, and `nodia-probe` writes to this same file.
     public static func write(_ message: String) {

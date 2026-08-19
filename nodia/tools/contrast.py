@@ -116,6 +116,17 @@ def main():
     if not rows:
         sys.exit("没有解析到任何配色 —— Palettes.swift 的写法可能变了，正则要跟着改")
 
+    # Counted, not assumed. The pattern above matches a palette by its shape,
+    # so one written a little differently is not an error here — it simply
+    # isn't in `rows`, and the run goes green having checked one fewer palette
+    # than exists. That is the same silent-shrinkage failure the scrub gate was
+    # built to stop, one file over.
+    declared = len(re.findall(r"static let \w+ = Palette\(", text))
+    untinted = len(re.findall(r"tint:\s*nil", text))
+    if len(rows) != declared - untinted:
+        sys.exit(f"解析到 {len(rows)} 套配色，但 Palettes.swift 里有 {declared} 套"
+                 f"（其中 {untinted} 套无 tint，按设计跳过）—— 正则漏掉了一些，先修它")
+
     labels = [n for n, _, _ in rows[0][1]]
     print(f"{'配色':<14}" + "".join(f"{l:>11}" for l in labels))
     print("-" * (14 + 11 * len(labels)))

@@ -141,6 +141,23 @@ final class LocalHTTPServerTests: XCTestCase {
     ///
     /// The second half of the test is the half that matters. A server that
     /// answers 400 and then dies has not been fixed.
+    /// A length nobody can parse is not a length of zero.
+    ///
+    /// Folding it to zero made the request look like one with no body at all,
+    /// so a client with a perfectly good token got a 401 — the body it sent had
+    /// been silently truncated to nothing on the way in.
+    func testUnparseableContentLengthIsRejectedRatherThanTreatedAsEmpty() throws {
+        for raw in ["abc", "99999999999999999999", "1.5", ""] {
+            let reply = rawRequest(
+                "POST /api/links HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: \(raw)\r\n\r\n"
+            )
+            XCTAssertTrue(reply.hasPrefix("HTTP/1.1 400"),
+                          "Content-Length: \(raw) 应当被拒绝，实际收到：\(reply.prefix(40))")
+        }
+        XCTAssertEqual(try request("/api/health", token: token).status, 200,
+                       "服务应当还活着")
+    }
+
     func testNegativeContentLengthIsRejectedRatherThanCrashing() throws {
         let reply = rawRequest("POST /api/links HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: -1\r\n\r\n")
         XCTAssertTrue(reply.hasPrefix("HTTP/1.1 400"),

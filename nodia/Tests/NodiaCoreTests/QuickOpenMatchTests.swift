@@ -112,6 +112,15 @@ final class QuickOpenMatchTests: XCTestCase {
         XCTAssertNil(QuickOpenMatch.liveTab(for: try url("https://example.com/a"), in: [saved]))
     }
 
+    /// Host case folds, everything after it does not — and userinfo is after
+    /// it. A password is not a hostname, and lowercasing one would change it.
+    func testUserinfoKeepsItsCaseWhileTheHostFolds() {
+        XCTAssertEqual(
+            QuickOpenMatch.normalize("https://User:PaSS@Example.COM/Detail/AbC"),
+            "https://User:PaSS@example.com/Detail/AbC"
+        )
+    }
+
     func testNoMatchWhenNothingIsOpen() throws {
         XCTAssertNil(QuickOpenMatch.liveTab(for: try url("https://example.com/x"),
                                             in: [tab("https://example.com/y")]))

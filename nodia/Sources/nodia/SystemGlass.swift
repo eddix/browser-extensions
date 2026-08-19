@@ -10,7 +10,7 @@ import AppKit
 /// them merges neighbours that drift close together.
 enum SystemGlass {
     /// Wraps `content` in glass.
-    static func wrap(_ content: NSView, cornerRadius: CGFloat) -> NSView {
+    static func wrap(_ content: NSView, cornerRadius: CGFloat) -> NSGlassEffectView {
         let glass = NSGlassEffectView()
         glass.cornerRadius = cornerRadius
         glass.contentView = content
@@ -24,8 +24,7 @@ enum SystemGlass {
     /// color floods it — measured, the palette color at full alpha produced a
     /// flat slate panel with the refraction and the edge highlights buried
     /// under it, which is the old frosted look reached the long way around.
-    static func tint(_ view: NSView, _ color: NSColor?, strength: CGFloat) {
-        guard let glass = view as? NSGlassEffectView else { return }
+    static func tint(_ glass: NSGlassEffectView, _ color: NSColor?, strength: CGFloat) {
         glass.tintColor = color?.withAlphaComponent(strength)
     }
 }

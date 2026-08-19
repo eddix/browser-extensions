@@ -13,7 +13,7 @@ from one prompt.
 - **快速打开** — one entry for a whole family of platform URLs. Search its
   name, then fill in a small form — every field prefilled with what you used
   last — and **⏎** opens it, switching to the tab if you already have one.
-- **⌘T** browse every quick-open template, **⌘D** duplicate clustering, **⌘G**
+- **⌘U** clears the field, **⌘T** browse every quick-open template, **⌘D** duplicate clustering, **⌘G**
   by-domain browsing.
 - Themeable glass UI (10 palettes, 4 fonts, size, tint strength) via the
   settings window. Menu-bar icon: left-click to search, right-click for

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds nodia.app (release, ad-hoc signed) into dist/.
+# Builds nodia.app (release, signed) into .dist/.
 set -euo pipefail
 cd "$(dirname "$0")"
 

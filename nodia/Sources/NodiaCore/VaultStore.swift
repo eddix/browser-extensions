@@ -466,7 +466,10 @@ public final class VaultStore: @unchecked Sendable {
                 let updated = Entry(
                     title: existing.title, url: existing.url, kind: existing.kind,
                     summary: summary.isEmpty ? nil : TextClean.singleLine(summary),
-                    keywords: keywords, relativePath: existing.relativePath,
+                    // Flattened the same way `save` flattens it, so the entry
+                    // in memory matches what a restart would read back.
+                    keywords: keywords.map(TextClean.singleLine),
+                    relativePath: existing.relativePath,
                     summaryAt: stamp
                 )
                 entryByURL[key] = updated

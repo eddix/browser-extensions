@@ -1,8 +1,8 @@
 # nodia — Arc tab finder (menubar)
 
 A resident macOS menu-bar app that fuzzy-searches **all** Arc sidebar tabs —
-including the *sleeping / unrealized* tabs that the `arc-tab-sorter` browser
-extension can't see (because `chrome.tabs.query` only returns realized tabs).
+including the *sleeping / unrealized* tabs a browser extension can't see
+(because `chrome.tabs.query` only returns realized tabs).
 
 ## Why native (not an extension)
 
@@ -23,7 +23,7 @@ sandbox → a native resident app. That's the whole reason this exists.
 
 | Need        | Source                                                                 |
 |-------------|------------------------------------------------------------------------|
-| Tab list    | `~/Library/Application Support/Arc/StorableSidebar.json` (FSEvents watch) |
+| Tab list    | `~/Library/Application Support/Arc/StorableSidebar.json`, re-read on each open |
 | Favicons    | Arc's Chromium `…/User Data/Default/Favicons` SQLite DB (read-only)     |
 | Activation  | `osascript` → Arc AppleScript `select` + `focus`; fallback `open <url>` |
 
@@ -69,8 +69,7 @@ walk of every Space to fail.
 *sidebar* sleeping tabs (category A).
 
 **Not in MVP:** archived tabs (category B — separate undocumented store),
-domain grouping, action menu (copy/close), settings UI, custom-hotkey recorder,
-multi-profile.
+action menu (copy/close), custom-hotkey recorder, multi-profile.
 
 ## Build
 
