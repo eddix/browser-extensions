@@ -394,11 +394,16 @@ See [DESIGN.md](./DESIGN.md) for the tab-parsing details.
 
 ```sh
 swift run nodia              # run from source
-swift run nodia-probe        # headless check: tabs, favicons, vault index
-swift test                   # 223 tests, incl. HTTP boundary + summary routing
+swift run nodia-probe        # headless check: tabs, favicons, vault index, 快速打开配置
+swift test                   # 239 tests, incl. HTTP boundary + summary routing
 python3 tools/scrub-check.py           # 工作区
 python3 tools/scrub-check.py --history # 外加这次推送会新增的提交
 ```
+
+`nodia-probe` 有配置问题时以非零退出，并在最后打印一行 `PROBLEMS <n>`。两者都是刻意的：
+它上面那些告警是给人读的散文，而散文是最不该拿去问脚本「有没有问题」的东西——模式没匹配上
+和真的没问题，输出一模一样。这不是假设，那些 `⚠︎` 行真的被一个码点对不上的 `⚠︎` grep 过，
+于是一份 `use:` 写错的配置被判定为干净、一路带到发布。**要判断有没有问题，看退出码。**
 
 这是公开仓库，示例里的域名和平台名都得是通用的。`scrub-check.py` 扫 git 会发布的
 一切——文件内容、文件名，以及 `--history` 下待推送提交的新增行、提交信息和作者邮箱

@@ -84,14 +84,28 @@ do {
     // Expand each template with its first candidate, so a broken URL is
     // visible here rather than discovered by a browser 404.
     print("\n🧪 模板展开自检:")
+    var expansionFailures = 0
     for t in templates {
-        let values = Dictionary(uniqueKeysWithValues: t.parameters.map {
-            ($0, t.choices(for: $0).first?.value ?? "<\($0)>")
-        })
+        // Two passes, for the same reason the form fills in two: a field whose
+        // values depend on another has no candidates at all until that one is
+        // answered, and asking it first gets an empty list and a placeholder —
+        // which then expands fine and reports a green tick for a URL nobody
+        // could have opened.
+        var values: [String: String] = [:]
+        for wantsVarying in [false, true] {
+            for parameter in t.parameters {
+                let isVarying: Bool
+                if case .varying = t.kind(of: parameter) { isVarying = true } else { isVarying = false }
+                guard isVarying == wantsVarying else { continue }
+                values[parameter] = t.choices(for: parameter, given: values).first?.value
+                    ?? "<\(parameter)>"
+            }
+        }
         if let url = t.expand(values) {
             print("  ✅ \(t.name)")
             print("       \(url.absoluteString)")
         } else {
+            expansionFailures += 1
             print("  ❌ \(t.name) — 无法展开（参数：\(t.parameters.joined(separator: ", "))）")
         }
     }
@@ -122,6 +136,23 @@ do {
                                        needle: Array(probeQuery.lowercased())) ?? -1
         print(String(format: "  %2d. [%4d] %@  %@", i + 1, score, mark, String(row.title.prefix(46))))
     }
+
+    // The verdict, as an exit code rather than as something to read.
+    //
+    // Everything above is prose for a person, and prose is a bad thing to ask a
+    // script whether it found anything: a pattern that fails to match and a run
+    // with nothing to report produce identical silence. That is not
+    // hypothetical here — the `⚠︎` lines above were once grepped for with a `⚠︎`
+    // whose code points didn't match the one being printed, and a config with a
+    // broken `use:` reference was declared clean and shipped on that basis.
+    //
+    // The summary line is ASCII on purpose, for the same reason: if something
+    // does grep this output, give it something that can't be got subtly wrong.
+    // The exit code is still the answer; the line is for the human reading
+    // along.
+    let failures = loaded.problems.count + expansionFailures
+    print("\nPROBLEMS \(failures)  （配置 \(loaded.problems.count)，展开失败 \(expansionFailures)）")
+    exit(failures == 0 ? 0 : 1)
 } catch {
     print("❌ \(error)")
     exit(1)
